@@ -5,9 +5,9 @@ import { eq } from "drizzle-orm";
 import { Session } from "@contracts/constants";
 import { users } from "@db/schema";
 import { getSessionCookieOptions } from "./lib/cookies";
-import { createRouter, authedQuery, publicQuery } from "./middleware";
+import { createRouter, adminQuery, authedQuery, publicQuery } from "./middleware";
 import { env, kimiOAuthEnabled } from "./lib/env";
-import { hashPassword, passwordProblem, verifyPassword } from "./lib/password";
+import { generateTemporaryPassword, hashPassword, passwordProblem, verifyPassword } from "./lib/password";
 import { clientIp, rateLimit } from "./lib/ratelimit";
 import { signSessionToken } from "./kimi/session";
 import { getDb } from "./queries/connection";
@@ -57,7 +57,10 @@ export const authRouter = createRouter({
   register: publicQuery
     .input(z.object({ name: z.string().trim().min(2).max(120), email, password: z.string().max(200) }))
     .mutation(async ({ ctx, input }) => {
-      if (!env.allowRegistration) throw new TRPCError({ code: "FORBIDDEN", message: "Registration is by invitation only." });
+      // Invitation-only portals still let the configured owner emails create the first staff accounts.
+      if (!env.allowRegistration && !env.ownerEmails.includes(input.email)) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Accounts are by invitation only. Contact Reputation Tenability staff for access." });
+      }
       throttle(ctx.req.headers, "register");
       const problem = passwordProblem(input.password);
       if (problem) throw new TRPCError({ code: "BAD_REQUEST", message: problem });
@@ -103,6 +106,28 @@ export const authRouter = createRouter({
       if (problem) throw new TRPCError({ code: "BAD_REQUEST", message: problem });
       await getDb().update(users).set({ passwordHash: await hashPassword(input.next) }).where(eq(users.id, ctx.user.id));
       return { ok: true };
+    }),
+
+  /** Staff: create a client account (invitation-only portals). Returns a one-time temporary password. */
+  inviteClient: adminQuery
+    .input(z.object({ name: z.string().trim().min(2).max(120), email, role: z.enum(["user", "admin"]).default("user") }))
+    .mutation(async ({ input }) => {
+      const unionId = `local:${input.email}`;
+      if (await findUserByUnionId(unionId)) throw new TRPCError({ code: "CONFLICT", message: "An account with that email already exists." });
+      const temporaryPassword = generateTemporaryPassword();
+      await getDb().insert(users).values({ unionId, name: input.name, email: input.email, role: input.role, passwordHash: await hashPassword(temporaryPassword) });
+      return { email: input.email, temporaryPassword };
+    }),
+
+  /** Staff: issue a new temporary password for an existing email/password account. */
+  resetClientPassword: adminQuery
+    .input(z.object({ userId: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const user = (await getDb().select().from(users).where(eq(users.id, input.userId)).limit(1))[0];
+      if (!user || !user.unionId.startsWith("local:")) throw new TRPCError({ code: "BAD_REQUEST", message: "Only email/password accounts can be reset here." });
+      const temporaryPassword = generateTemporaryPassword();
+      await getDb().update(users).set({ passwordHash: await hashPassword(temporaryPassword) }).where(eq(users.id, user.id));
+      return { email: user.email, temporaryPassword };
     }),
 
   logout: authedQuery.mutation(async ({ ctx }) => {

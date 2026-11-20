@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, Lock } from "lucide-react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { BRAND } from "@contracts/portal";
 
@@ -23,7 +23,9 @@ export default function Login() {
   const utils = trpc.useUtils();
   const me = trpc.auth.me.useQuery(undefined, { retry: false });
   const config = trpc.auth.config.useQuery();
-  const [mode, setMode] = useState<"signin" | "register">("signin");
+  const [params] = useSearchParams();
+  const setup = params.has("setup");
+  const [mode, setMode] = useState<"signin" | "register">(setup ? "register" : "signin");
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const onDone = async () => { await utils.auth.me.invalidate(); navigate("/portal"); };
@@ -58,7 +60,8 @@ export default function Login() {
           {mode === "register" && <small className="hint">At least 10 characters, mixing three of: lowercase, uppercase, numbers, symbols.</small>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="gold-button wide" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}<ArrowRight /></button>
-          {config.data?.registration !== false && <button type="button" className="text-switch" onClick={() => { setMode(mode === "signin" ? "register" : "signin"); setError(""); }}>{mode === "signin" ? "New client? Create an account" : "Already have an account? Sign in"}</button>}
+          {(config.data?.registration !== false || setup) && <button type="button" className="text-switch" onClick={() => { setMode(mode === "signin" ? "register" : "signin"); setError(""); }}>{mode === "signin" ? "New client? Create an account" : "Already have an account? Sign in"}</button>}
+          {config.data?.registration === false && !setup && <p className="hint">New clients receive their sign-in details from Reputation Tenability staff.</p>}
           {oauth && <><div className="divider"><span>or</span></div><a className="outline-button wide" href={oauth}>Continue with Kimi</a></>}
           <p className="legal-note">By continuing you agree that the workspace provides education and organization, not legal advice.</p>
         </form>

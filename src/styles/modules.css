@@ -314,3 +314,12 @@
   .statement-mock .mark-triangle { animation: none; }
   .facts-panel { animation: none; }
 }
+
+/* Staff invitations */
+.invite-form { display: grid; grid-template-columns: 1.2fr 1.4fr .8fr auto; gap: 14px; align-items: end; margin-bottom: 20px; padding: 20px; border: 1px solid var(--line); background: var(--paper-bright); }
+.invite-form .gold-button { min-height: 43px; }
+.temp-password { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 20px; padding: 16px 18px; border-left: 3px solid var(--ok); background: var(--ok-soft); }
+.temp-password p { flex-basis: 100%; margin: 0; font-size: 11px; line-height: 1.6; }
+.temp-password code { padding: 8px 12px; background: #fff; font-size: 15px; letter-spacing: .06em; }
+.admin-table .outline-button { padding: 6px 10px; font-size: 10px; white-space: nowrap; }
+@media (max-width: 900px) { .invite-form { grid-template-columns: 1fr; } }
