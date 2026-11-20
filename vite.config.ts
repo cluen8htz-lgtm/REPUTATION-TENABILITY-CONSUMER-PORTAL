@@ -2,7 +2,6 @@ import devServer from "@hono/vite-dev-server";
 import path from "path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { inspectAttr } from "kimi-plugin-inspect-react";
 import { VitePWA } from "vite-plugin-pwa";
 
 const __dirname = import.meta.dirname;
@@ -18,7 +17,6 @@ export default defineConfig({
       },
     },
     devServer({ entry: "api/boot.ts", exclude: [/^\/(?!api\/).*$/] }),
-    inspectAttr(),
     react(),
     VitePWA({
       registerType: "autoUpdate",

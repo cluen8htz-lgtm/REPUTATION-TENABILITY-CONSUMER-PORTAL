@@ -1,215 +1,293 @@
 /**
- * repo-router.ts — Repossession module tRPC router.
+ * repo-router.ts — Self-help repossession module (Article 9 + FDCPA + SEC).
  *
- * Mirrors the FCBA module's flow: intake -> exhibit-label -> SEC due
- * diligence -> notice audit -> violation report -> demand letter ->
- * federal complaint (Wright v. Santander structure) -> special report.
+ * Flow: open case → file exhibits (auto-labeled) → answer the facts
+ * questionnaire (optionally pre-filled by Claude reading the notices) →
+ * deterministic REPO-001…008 screening → drafts (document demand, notice of
+ * demand, federal complaint skeleton, special report, SEC due-diligence plan)
+ * with AI assistance and a template fallback → ZIP case bundle.
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { authedQuery, createRouter } from "./middleware";
 import { getDb } from "./queries/connection";
-import { repoDocuments, repoViolations, repoCases, repoEvents } from "@db/schema";
-import { REPO_RULES, DEMAND_CHECKLIST, SEC_EVIDENCE_CHAIN, CASE_ANCHORS, UCC_SELF_HELP, STATE_SELF_HELP, FDCPA_REPO } from "@contracts/repo";
-import { storage } from "./lib/storage";
-import { listModels, classifyAiError } from "./ai/ai-client";
-import { kimiGw } from "./ai/provider";
-import { generateText } from "ai";
+import { repoCases, repoDocuments, repoDrafts, repoEvents, repoViolations } from "@db/schema";
+import { CASE_ANCHORS, DEMAND_CHECKLIST, FDCPA_REPO, SEC_EVIDENCE_CHAIN, STATE_SELF_HELP, UCC_SELF_HELP } from "@contracts/repo";
+import { EMPTY_REPO_FACTS, RepoFactsSchema, evaluateRepo, missingEvidence, redemptionWindow, repoRiskScore, type RepoFacts } from "@contracts/repo-engine";
+import { exhibitLabel } from "@contracts/fcba-engine";
+import { blob, decodeUpload, makeKey, sniffContentType } from "./lib/blob";
+import { AiUnavailable, extractStructured, generateDraft, type Attachment } from "./ai/llm";
+import type { RepoCase, RepoViolation, RepoDocument } from "@db/schema";
 
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const DOC_TYPES = ["contract", "notice_611", "notice_613", "notice_616", "default_notice", "notice_of_sale", "ucc1", "prospectus_424b5", "report_10k", "report_8k", "sales_servicing_agreement", "pacer_case", "dmv_title", "repo_work_order", "other"] as const;
+const DRAFT_TYPES = ["document_demand", "notice_of_demand", "federal_complaint", "special_report", "sec_due_diligence"] as const;
+type DraftType = (typeof DRAFT_TYPES)[number];
+const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const today = () => new Date().toISOString().slice(0, 10);
 
-const SYSTEM_PROMPT = `You are the Reputation Tenability Repossession Analysis Agent, embodying an SEC attorney and a consumer-law/Article 9 attorney trained on Wright v. Santander Consumer USA (M.D. Fla.) and Leal v. Toyota Motor Credit (Cal.) — per /prompts/repo-attorney-prompt.md. Apply UCC 9-609/610/611/613/615/616/620-623, Fla. Stat. ch. 679 (self-help §679.609), Cal. Com. Code Div. 9, and FDCPA 15 U.S.C. §1692a(6)/§1692f(6). The securitization blueprint: the retail contract's receivable was sold into a trust (Toyota Auto Receivables — TMVT/TMNT); if the named creditor sent notices or ordered repossession after the sale date, it likely had no present right to possession. Never invent facts, dates, docket numbers, or citations; mark missing documents as DEMAND ITEMS. Output is attorney-review work product, not legal advice.`;
-
-async function repoExhibitLabel(userId: number): Promise<string> {
-  const rows = await getDb().select().from(repoDocuments).where(eq(repoDocuments.userId, userId));
-  return `Exhibit ${LETTERS[rows.length % 26]}${rows.length >= 26 ? Math.floor(rows.length / 26) : ""}`;
+function loadAttorneyPrompt(): string {
+  try {
+    return readFileSync(path.resolve(process.cwd(), "prompts/repo-attorney-prompt.md"), "utf8");
+  } catch {
+    return "You are the Reputation Tenability Repossession Analysis Agent (SEC + Article 9 consumer-law review).";
+  }
 }
 
-async function ask(modelPrompt: string): Promise<string> {
-  const { defaultModelId } = await listModels();
-  const res = await generateText({
-    model: kimiGw(defaultModelId),
-    system: SYSTEM_PROMPT,
-    prompt: modelPrompt,
-    providerOptions: { "kimi-gw": { max_completion_tokens: 4000 } },
-  });
-  return res.text;
+const SYSTEM_PROMPT = `${loadAttorneyPrompt()}
+
+Operating constraints for this portal:
+- Output is attorney-review work product for a licensed attorney, never advice to the consumer.
+- Use only the facts, findings, and exhibits supplied in the request. Where a fact is missing, write [DEMAND ITEM: …] or [TO CONFIRM: …] rather than assuming it.
+- Securitization does not by itself defeat a servicer's authority to repossess on the trust's behalf; present REPO-001/REPO-008 as issues to prove with the Sale & Servicing Agreement, not as conclusions.
+- Never invent docket numbers, quotations, or case holdings. Cite cases only by the names provided.
+- Plain text only, no markdown tables.`;
+
+async function ownCase(userId: number, id: number): Promise<RepoCase> {
+  const kase = await getDb().query.repoCases.findFirst({ where: and(eq(repoCases.id, id), eq(repoCases.userId, userId)) });
+  if (!kase) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found." });
+  return kase;
+}
+
+function factsOf(kase: RepoCase): RepoFacts {
+  const base: RepoFacts = { ...EMPTY_REPO_FACTS, state: kase.state, repossessionDate: kase.repossessionDate?.slice(0, 10) ?? null, saleDate: kase.saleDate?.slice(0, 10) ?? null };
+  if (!kase.facts) return base;
+  try {
+    return RepoFactsSchema.parse({ ...base, ...JSON.parse(kase.facts) });
+  } catch {
+    return base;
+  }
+}
+
+function caseHeader(kase: RepoCase) {
+  return `${kase.creditorName}${kase.repoAgencyName ? ` / repossession agency ${kase.repoAgencyName}` : ""}; vehicle ${kase.vehicle}${kase.vin ? `, VIN ${kase.vin}` : ""}; state ${kase.state}; contract signed ${kase.rcSignDate ?? "[TO CONFIRM]"}; repossessed ${kase.repossessionDate ?? "[TO CONFIRM]"}; sale ${kase.saleDate ?? "[TO CONFIRM]"}`;
+}
+
+/** Deterministic drafts — always available, citation-safe. */
+export function templateDraft(type: DraftType, kase: RepoCase, violations: Pick<RepoViolation, "ruleId" | "title" | "statute" | "excerpt">[], docs: Pick<RepoDocument, "exhibitLabel" | "docType" | "fileName">[], consumer: string, sendTo = "both"): string {
+  const date = today();
+  const exhibits = docs.length ? docs.map((d) => `- ${d.exhibitLabel}: ${d.fileName} (${d.docType.replaceAll("_", " ")})`).join("\n") : "- [No exhibits on file yet]";
+  const findings = violations.length
+    ? violations.map((v, i) => `${i + 1}. ${v.title} [${v.ruleId}]\n   Authority: ${v.statute}\n   Basis: ${v.excerpt}`).join("\n\n")
+    : "[Run the screening questionnaire to list findings.]";
+  const recipients = sendTo === "creditor" ? kase.creditorName : sendTo === "repo_agency" ? kase.repoAgencyName ?? "[Repossession agency]" : `${kase.creditorName}${kase.repoAgencyName ? `\n${kase.repoAgencyName}` : ""}`;
+  const state = STATE_SELF_HELP[kase.state];
+  const footer = "\n— Draft prepared for attorney review. Not legal advice. Verify every fact, date, and citation before use. —";
+  switch (type) {
+    case "document_demand":
+      return `${date}\n\nVIA CERTIFIED MAIL — RETURN RECEIPT REQUESTED\n\n${recipients}\n\nRe: Demand for documents — ${caseHeader(kase)}\nDebtor: ${consumer}\n\nPlease produce the following within 30 days of receipt:\n\n${DEMAND_CHECKLIST.map((item, i) => `${i + 1}. ${item}`).join("\n")}\n\nThis request concerns the repossession and any disposition of the vehicle under UCC Article 9 Part 6 (${state.citation} and companion sections) and the Fair Debt Collection Practices Act, including 15 U.S.C. §1692f(6). Please preserve all records, recordings, GPS and dispatch data, photographs, and communications relating to this account and the repossession.\n\nAll rights are reserved.\n\nSincerely,\n\n\n${consumer}${footer}`;
+    case "notice_of_demand":
+      return `${date}\n\nVIA CERTIFIED MAIL — RETURN RECEIPT REQUESTED\n\n${recipients}\n\nRe: NOTICE OF DEMAND — ${caseHeader(kase)}\n\nThis notice identifies conduct in connection with the repossession and disposition of the vehicle that appears to violate Article 9 and the FDCPA:\n\n${findings}\n\nDEMAND\n\n1. Produce the documents listed in the enclosed demand, including proof of your authority to repossess on the repossession date.\n2. Preserve the vehicle (if not yet sold) and all records.\n3. Cease collection of any deficiency pending production and review.\n4. Respond in writing within 30 days.\n\nEXHIBITS\n\n${exhibits}\n\nSincerely,\n\n\n${consumer}${footer}`;
+    case "federal_complaint":
+      return `UNITED STATES DISTRICT COURT\n[DISTRICT — e.g., ${kase.state === "FL" ? "MIDDLE DISTRICT OF FLORIDA" : "CENTRAL DISTRICT OF CALIFORNIA"}]\n\n${consumer.toUpperCase()}, Plaintiff,\nv.\n${kase.creditorName.toUpperCase()}${kase.repoAgencyName ? `, and ${kase.repoAgencyName.toUpperCase()}` : ""}, Defendants.\n\nCase No. [__________]\n\nCOMPLAINT AND DEMAND FOR JURY TRIAL\n(Structure follows ${CASE_ANCHORS[0].name}, ${CASE_ANCHORS[0].court})\n\nI. JURISDICTION AND VENUE\n[28 U.S.C. §1331 (FDCPA, 15 U.S.C. §1692k(d)); supplemental jurisdiction, 28 U.S.C. §1367; venue, 28 U.S.C. §1391(b).]\n\nII. PARTIES\n[Plaintiff; secured creditor/servicer; repossession agency as a "debt collector" under 15 U.S.C. §1692a(6) as applied to §1692f(6).]\n\nIII. FACTUAL ALLEGATIONS\n[Contract, assignment/securitization timeline from SEC filings, default, repossession on ${kase.repossessionDate ?? "[date]"}, notices, disposition on ${kase.saleDate ?? "[date]"}.]\n\nIV. SCREENING FINDINGS TO DEVELOP INTO COUNTS\n\n${findings}\n\nV. CLAIMS FOR RELIEF\nCount I — 15 U.S.C. §1692f(6) (repossession agency)\nCount II — UCC Article 9 (${state.citation}; §§9-610, 9-611, 9-613, 9-616, 9-625)\nCount III — State-law conversion / statutory claims [counsel to confirm]\n\nVI. PRAYER FOR RELIEF\n[Actual and statutory damages; UCC 9-625(c)(2) minimum damages for consumer goods; costs and fees under 15 U.S.C. §1692k.]\n\nJURY DEMAND\n\nEXHIBITS\n${exhibits}\n${footer}`;
+    case "special_report":
+      return `SPECIAL REPORT — SECURITIZATION AND AUTHORITY TO REPOSSESS\n${caseHeader(kase)}\nPrepared ${date}\n\n1. QUESTION PRESENTED\nWhether the entity that ordered the repossession and sent the Article 9 notices held, or acted under authority from the holder of, the security interest on the repossession date.\n\n2. EVIDENCE CHAIN\n${SEC_EVIDENCE_CHAIN.map((e, i) => `${i + 1}. ${e.doc} — ${e.source}\n   Use: ${e.use}`).join("\n")}\n\n3. SCREENING FINDINGS\n${findings}\n\n4. EXHIBIT MAP\n${exhibits}\n\n5. OPEN ITEMS\n[List each document still to be obtained and what it would prove.]\n${footer}`;
+    case "sec_due_diligence":
+      return `SEC DUE DILIGENCE PLAN\n${caseHeader(kase)}\nPrepared ${date}\n\nSteps (EDGAR full-text search is free; the Sale & Servicing Agreement is usually an exhibit to the 8-K filed at closing):\n\n${SEC_EVIDENCE_CHAIN.map((e, i) => `${i + 1}. Obtain: ${e.doc}\n   Where: ${e.source}\n   Proves: ${e.use}`).join("\n\n")}\n\nTarget contract year: ${kase.rcSignDate?.slice(0, 4) ?? "[TO CONFIRM]"}.\nCompare the trust closing / cutoff date with the contract signing date and the repossession date, then compare the secured party of record (UCC-1 / title) with the sender of each notice.\n${footer}`;
+  }
+}
+
+async function attachmentsFor(userId: number, caseId: number, limit = 8): Promise<Attachment[]> {
+  const docs = await getDb().select().from(repoDocuments).where(and(eq(repoDocuments.caseId, caseId), eq(repoDocuments.userId, userId))).orderBy(asc(repoDocuments.createdAt)).limit(limit);
+  const out: Attachment[] = [];
+  for (const d of docs) {
+    const ct = d.contentType ?? "application/octet-stream";
+    if (!(ct === "application/pdf" || ct.startsWith("image/") || ct.startsWith("text/"))) continue;
+    out.push({ bytes: await blob().get(d.fileKey), contentType: ct, title: `${d.exhibitLabel} — ${d.fileName}` });
+  }
+  return out;
+}
+
+async function screen(userId: number, kase: RepoCase, facts: RepoFacts) {
+  const db = getDb();
+  const hits = evaluateRepo(facts);
+  await db.delete(repoViolations).where(and(eq(repoViolations.caseId, kase.id), eq(repoViolations.userId, userId), eq(repoViolations.basis, "rule")));
+  if (hits.length) {
+    await db.insert(repoViolations).values(hits.map((h) => ({ userId, caseId: kase.id, ruleId: h.ruleId, title: h.title, statute: h.statute, severity: h.severity, excerpt: h.excerpt, annotation: h.annotation, basis: "rule" as const })));
+  }
+  const score = repoRiskScore(hits);
+  await db.update(repoCases).set({
+    facts: JSON.stringify(facts),
+    riskScore: score,
+    state: facts.state,
+    repossessionDate: facts.repossessionDate,
+    saleDate: facts.saleDate,
+    status: kase.status === "intake" || kase.status === "demand_sent" ? "analyzed" : kase.status,
+  }).where(eq(repoCases.id, kase.id));
+  await db.insert(repoEvents).values({ userId, caseId: kase.id, type: "analyzed", message: `Screening complete: ${hits.length} indicator(s), risk score ${score}/100.` });
+  return { hits, riskScore: score };
 }
 
 export const repoRouter = createRouter({
-  /** Upload any repo-case artifact (RC, notices, UCC-1, prospectus, PACER file). */
-  uploadDocument: authedQuery
-    .input(z.object({
-      name: z.string().min(1).max(240),
-      contentBase64: z.string().min(1).max(8_500_000),
-      contentType: z.string().max(180).optional(),
-      docType: z.enum(["contract", "notice_611", "notice_613", "notice_616", "default_notice", "notice_of_sale", "ucc1", "prospectus_424b5", "report_10k", "report_8k", "sales_servicing_agreement", "pacer_case", "dmv_title", "repo_work_order", "other"]),
-      caseId: z.number().int().positive().optional(),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      const db = getDb();
-      const bytes = Uint8Array.from(Buffer.from(input.contentBase64, "base64"));
-      if (bytes.byteLength > 6_000_000) throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Files must be under 6 MB." });
-      const safeName = input.name.replace(/[^\p{L}\p{N}._ -]/gu, "_");
-      const saved = await storage.uploadFile({ fileContent: bytes, fileName: `repo/${ctx.user.id}/${Date.now()}-${safeName}`, contentType: input.contentType });
-      const exhibitLabel = await repoExhibitLabel(ctx.user.id);
-      const [{ id }] = await db.insert(repoDocuments).values({
-        userId: ctx.user.id, caseId: input.caseId ?? null, fileKey: saved.key, fileName: input.name,
-        exhibitLabel, docType: input.docType, analysisStatus: "pending",
-      }).$returningId();
-      await db.insert(repoEvents).values({ userId: ctx.user.id, caseId: input.caseId ?? null, documentId: id, type: "uploaded", message: `${exhibitLabel} received (${input.docType}). Filed and queued for SEC + Article 9 analysis.` });
-      return { id, exhibitLabel, message: `Receipt confirmed. ${exhibitLabel} filed. The agent will analyze it against the Wright / Leal case files and the securitization blueprint.` };
-    }),
-
-  /** Open a repossession case (ties documents, violations, and drafts together). */
   openCase: authedQuery
     .input(z.object({
-      creditorName: z.string().min(2).max(255),
-      repoAgencyName: z.string().max(255).optional(),
-      vehicle: z.string().min(2).max(255),
-      vin: z.string().max(30).optional(),
+      creditorName: z.string().trim().min(2).max(255),
+      repoAgencyName: z.string().trim().max(255).optional(),
+      vehicle: z.string().trim().min(2).max(255),
+      vin: z.string().trim().max(30).optional(),
       state: z.enum(["FL", "CA"]),
-      repossessionDate: z.string().min(4).max(25).optional(),
-      saleDate: z.string().min(4).max(25).optional(),
-      rcSignDate: z.string().min(4).max(25).optional(),
+      repossessionDate: isoDay.optional(),
+      saleDate: isoDay.optional(),
+      rcSignDate: isoDay.optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const [{ id }] = await getDb().insert(repoCases).values({ userId: ctx.user.id, ...input, status: "intake" }).$returningId();
-      await getDb().insert(repoEvents).values({ userId: ctx.user.id, caseId: id, type: "case_opened", message: `Repossession case opened vs ${input.creditorName} (${input.vehicle}). Demand checklist queued for creditor and repo agency.` });
+      const values = { ...input, repoAgencyName: input.repoAgencyName || null, vin: input.vin || null };
+      const [{ id }] = await getDb().insert(repoCases).values({ userId: ctx.user.id, ...values, status: "intake" }).$returningId();
+      await getDb().insert(repoEvents).values({ userId: ctx.user.id, caseId: id, type: "case_opened", message: `Repossession case opened: ${input.creditorName} — ${input.vehicle}.` });
       return { id };
     }),
 
-  /** SEC due diligence: prospectus -> 10-K -> 8-K -> UCC-1 -> sale & servicing. */
-  secDueDiligence: authedQuery
-    .input(z.object({ caseId: z.number().int().positive() }))
-    .query(async ({ ctx, input }) => {
-      const db = getDb();
-      const kase = await db.query.repoCases.findFirst({ where: and(eq(repoCases.id, input.caseId), eq(repoCases.userId, ctx.user.id)) });
-      if (!kase) throw new TRPCError({ code: "NOT_FOUND" });
-      const docs = await db.select().from(repoDocuments).where(and(eq(repoDocuments.caseId, input.caseId), eq(repoDocuments.userId, ctx.user.id)));
-      try {
-        const report = await ask(
-`SEC DUE DILIGENCE REPORT — Case ${kase.creditorName} / ${kase.vehicle}.
-Documents on file: ${docs.map(d => `${d.exhibitLabel} (${d.docType}: ${d.fileName})`).join("; ") || "none"}.
-Evidence chain to reconstruct: ${SEC_EVIDENCE_CHAIN.map(e => `${e.doc} [${e.source}] — ${e.use}`).join(" | ")}.
-Contract year target: ${kase.rcSignDate ?? "unknown — flag as DEMAND ITEM"}.
-Produce: (1) the securitization timeline with exact dates from any filings provided; (2) who held the security interest on the repossession date vs. who sent notices; (3) every missing document listed as a DEMAND ITEM with retrieval cost note (EDGAR free; sale & servicing agreement via 424B5 exhibit or tender-offer copies — note the cost); (4) stale-DMV-lien / bonded-title issue if title shows a lienholder different from the secured party of record.`
-        );
-        await db.insert(repoEvents).values({ userId: ctx.user.id, caseId: input.caseId, type: "sec_report", message: "SEC due diligence report complete. See report." });
-        return { report };
-      } catch (e) {
-        const mapped = classifyAiError(e);
-        return { report: "", unavailable: `SEC analysis unavailable (${mapped.name}). Retry shortly.` };
-      }
-    }),
-
-  /** Full investigation: notices + contract + SEC docs -> violation report + drafts. */
-  analyzeCase: authedQuery
-    .input(z.object({ caseId: z.number().int().positive() }))
+  updateCase: authedQuery
+    .input(z.object({ id: z.number().int().positive(), status: z.enum(["intake", "demand_sent", "analyzed", "drafted", "arbitration", "resolved"]) }))
     .mutation(async ({ ctx, input }) => {
-      const db = getDb();
-      const kase = await db.query.repoCases.findFirst({ where: and(eq(repoCases.id, input.caseId), eq(repoCases.userId, ctx.user.id)) });
-      if (!kase) throw new TRPCError({ code: "NOT_FOUND" });
-      const docs = await db.select().from(repoDocuments).where(and(eq(repoDocuments.caseId, input.caseId), eq(repoDocuments.userId, ctx.user.id)));
-      const corpus = docs.map(d => `${d.exhibitLabel} [${d.docType}] ${d.fileName}`).join("; ");
-      try {
-        const analysis = await ask(
-`FULL REPOPSESSION INVESTIGATION — ${kase.creditorName}, ${kase.vehicle}${kase.vin ? ` VIN ${kase.vin}` : ""}, state ${kase.state}. Repo date: ${kase.repossessionDate ?? "unknown"}; sale date: ${kase.saleDate ?? "unknown"}; RC signed: ${kase.rcSignDate ?? "unknown"}.
-Documents: ${corpus || "none uploaded — run secDueDiligence and send demand checklist first"}.
-Apply every REPO rule (REPO-001 no present right to possession / §1692f(6); REPO-002 §9-613 secured-party misidentification; REPO-003 no redemption (time/place/date); REPO-004 commercially unreasonable sale 9-610/615; REPO-005 breach of peace 9-609(2); REPO-006 FDCPA repo-agent coverage; REPO-007 §9-616 deficiency; REPO-008 securitization concealment).
-Statutory frame: UCC ${Object.keys(UCC_SELF_HELP).join(", ")}; ${kase.state === "FL" ? STATE_SELF_HELP.FL.citation + " — " + STATE_SELF_HELP.FL.text : STATE_SELF_HELP.CA.text}; FDCPA ${FDCPA_REPO["1692f(6)"]}.
-Case anchors: Wright v. Santander (M.D. Fla.) — federal-complaint structure; Leal v. Toyota Motor Credit (Cal.) — Toyota/trust analysis.
-Output EXACTLY this JSON: {"violations":[{"ruleId":"REPO-00X","title":"...","statute":"...","severity":"critical|major|minor","excerpt":"...","annotation":"..."}],"demandItems":[...],"timelineNotes":"..."}`
-        );
-        const json = JSON.parse(analysis.replace(/```json|```/g, "").trim());
-        for (const v of json.violations ?? []) {
-          await db.insert(repoViolations).values({ userId: ctx.user.id, caseId: input.caseId, ruleId: v.ruleId, title: v.title, statute: v.statute, severity: v.severity, excerpt: v.excerpt, annotation: v.annotation });
-        }
-        await db.update(repoCases).set({ status: "analyzed" }).where(eq(repoCases.id, input.caseId));
-        await db.insert(repoEvents).values({ userId: ctx.user.id, caseId: input.caseId, type: "analyzed", message: `Analysis complete: ${(json.violations ?? []).length} violation(s) identified. Demand items: ${(json.demandItems ?? []).length}.` });
-        return json;
-      } catch (e) {
-        const mapped = classifyAiError(e);
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Analysis unavailable (${mapped.name}).` });
-      }
+      const kase = await ownCase(ctx.user.id, input.id);
+      await getDb().update(repoCases).set({ status: input.status }).where(eq(repoCases.id, kase.id));
+      await getDb().insert(repoEvents).values({ userId: ctx.user.id, caseId: kase.id, type: "status", message: `Status changed to ${input.status.replaceAll("_", " ")}.` });
+      return { ok: true };
     }),
 
-  listCases: authedQuery.query(({ ctx }) => getDb().select().from(repoCases).where(eq(repoCases.userId, ctx.user.id)).orderBy(desc(repoCases.createdAt))),
-  listViolations: authedQuery.query(({ ctx }) => getDb().select().from(repoViolations).where(eq(repoViolations.userId, ctx.user.id)).orderBy(desc(repoViolations.createdAt))),
+  listCases: authedQuery.query(({ ctx }) =>
+    getDb().select().from(repoCases).where(eq(repoCases.userId, ctx.user.id)).orderBy(desc(repoCases.createdAt))),
 
-  documentUrl: authedQuery
+  caseDetail: authedQuery
     .input(z.object({ id: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
-      const d = await getDb().query.repoDocuments.findFirst({ where: and(eq(repoDocuments.id, input.id), eq(repoDocuments.userId, ctx.user.id)) });
-      if (!d) throw new TRPCError({ code: "NOT_FOUND" });
-      return storage.getPresignedUrl({ key: d.fileKey, download: true });
+      const db = getDb();
+      const kase = await ownCase(ctx.user.id, input.id);
+      const [documents, violations, drafts, events] = await Promise.all([
+        db.select().from(repoDocuments).where(and(eq(repoDocuments.caseId, kase.id), eq(repoDocuments.userId, ctx.user.id))).orderBy(asc(repoDocuments.createdAt)),
+        db.select().from(repoViolations).where(and(eq(repoViolations.caseId, kase.id), eq(repoViolations.userId, ctx.user.id))),
+        db.select().from(repoDrafts).where(and(eq(repoDrafts.caseId, kase.id), eq(repoDrafts.userId, ctx.user.id))).orderBy(desc(repoDrafts.updatedAt)),
+        db.select().from(repoEvents).where(and(eq(repoEvents.caseId, kase.id), eq(repoEvents.userId, ctx.user.id))).orderBy(desc(repoEvents.createdAt)).limit(50),
+      ]);
+      const facts = factsOf(kase);
+      return {
+        case: kase,
+        facts,
+        documents,
+        violations,
+        drafts,
+        events,
+        missing: missingEvidence(facts, documents.map((d) => d.docType)),
+        redemption: redemptionWindow(facts, today()),
+      };
     }),
 
-  /** Demand letter + federal complaint (Wright structure) + special report. */
-  generateDraft: authedQuery
+  uploadDocument: authedQuery
     .input(z.object({
       caseId: z.number().int().positive(),
-      draftType: z.enum(["notice_of_demand", "federal_complaint", "special_report"]),
+      name: z.string().min(1).max(240),
+      contentBase64: z.string().min(1).max(21_000_000),
+      contentType: z.string().max(180).optional(),
+      docType: z.enum(DOC_TYPES),
     }))
-    .query(async ({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      const kase = await db.query.repoCases.findFirst({ where: and(eq(repoCases.id, input.caseId), eq(repoCases.userId, ctx.user.id)) });
-      if (!kase) throw new TRPCError({ code: "NOT_FOUND" });
-      const violations = await db.select().from(repoViolations).where(and(eq(repoViolations.caseId, input.caseId), eq(repoViolations.userId, ctx.user.id)));
-      const docs = await db.select().from(repoDocuments).where(and(eq(repoDocuments.caseId, input.caseId), eq(repoDocuments.userId, ctx.user.id)));
+      const kase = await ownCase(ctx.user.id, input.caseId);
+      let bytes: Uint8Array;
       try {
-        const letter = await ask(
-`DRAFT: ${input.draftType} — ${kase.creditorName}${kase.repoAgencyName ? ` and repossession agency ${kase.repoAgencyName}` : ""}; vehicle ${kase.vehicle}${kase.vin ? `, VIN ${kase.vin}` : ""}; state ${kase.state}; repo ${kase.repossessionDate ?? "unknown"}; sale ${kase.saleDate ?? "unknown"}; RC signed ${kase.rcSignDate ?? "unknown"}.
-Exhibits: ${docs.map(d => `${d.exhibitLabel} (${d.docType}: ${d.fileName})`).join("; ") || "none"}.
-Violations: ${violations.map(v => `[${v.ruleId}] ${v.title} — ${v.statute}. ${v.excerpt}`).join(" | ") || "run analyzeCase first"}.
-${input.draftType === "notice_of_demand" ? "Draft the NOTICE OF DEMAND: attach the full DEMAND_CHECKLIST (original RC, all 611/613/616 notices, default notice, notice of sale with time/place/date, UCC-1, authority documentation, sale & servicing agreement, repo work order), 30-day cure, preserve-vehicle/records demand, and FDCPA + Article 9 reservation of rights." : ""}
-${input.draftType === "federal_complaint" ? "Draft the FEDERAL COMPLAINT following the Wright v. Santander (M.D. Fla.) structure: jurisdiction/venue, parties (including repo agency as FDCPA debt collector), factual background (securitization timeline from SEC filings), counts (wrongful repossession §1692f(6), Article 9 notice failures 9-611/613/616, commercially unreasonable sale 9-610/615, FDCPA 1692d/e, state-law conversion/statutory claims per FL/CA), damages, prayer. Attorney-review work product; leave caption placeholders." : ""}
-${input.draftType === "special_report" ? "Draft the SPECIAL REPORT: how the creditor elected securitization (sale of receivables to the trust — cite the 424B5/10-K/8-K/UCC-1 on file) and therefore retained no security interest, yet repossessed the collateral as creditor/secured party; how each §9-611/613 notice materially misrepresented its character and capacity; evidence table mapping each exhibit to each conclusion; note any bonded-title/DMV-lien inconsistency." : ""}`
-        );
-        await db.insert(repoEvents).values({ userId: ctx.user.id, caseId: input.caseId, type: "draft", message: `${input.draftType} drafted for attorney review.` });
-        return { letter };
-      } catch (e) {
-        const mapped = classifyAiError(e);
-        return { letter: "", unavailable: `Drafting unavailable (${mapped.name}).` };
+        bytes = decodeUpload(input.contentBase64);
+      } catch (error) {
+        throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: (error as Error).message });
+      }
+      const contentType = sniffContentType(bytes, input.contentType);
+      const count = (await db.select({ id: repoDocuments.id }).from(repoDocuments).where(and(eq(repoDocuments.userId, ctx.user.id), eq(repoDocuments.caseId, kase.id)))).length;
+      const label = exhibitLabel(count);
+      const saved = await blob().put(makeKey(`repo/${ctx.user.id}/${kase.id}`, input.name), bytes, contentType);
+      const [{ id }] = await db.insert(repoDocuments).values({
+        userId: ctx.user.id, caseId: kase.id, fileKey: saved.key, fileName: input.name, exhibitLabel: label,
+        docType: input.docType, contentType, size: saved.size, analysisStatus: "complete",
+      }).$returningId();
+      await db.insert(repoEvents).values({ userId: ctx.user.id, caseId: kase.id, documentId: id, type: "uploaded", message: `${label} received (${input.docType.replaceAll("_", " ")}): ${input.name}.` });
+      return { id, exhibitLabel: label, message: `Receipt confirmed. ${input.name} is filed as ${label}.` };
+    }),
+
+  removeDocument: authedQuery
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const doc = await getDb().query.repoDocuments.findFirst({ where: and(eq(repoDocuments.id, input.id), eq(repoDocuments.userId, ctx.user.id)) });
+      if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
+      await getDb().delete(repoDocuments).where(eq(repoDocuments.id, doc.id));
+      await blob().remove(doc.fileKey).catch(() => undefined);
+      return { ok: true };
+    }),
+
+  /** Save the questionnaire and run the deterministic screen. */
+  saveFacts: authedQuery
+    .input(z.object({ caseId: z.number().int().positive(), facts: RepoFactsSchema }))
+    .mutation(async ({ ctx, input }) => screen(ctx.user.id, await ownCase(ctx.user.id, input.caseId), input.facts)),
+
+  previewRules: authedQuery
+    .input(z.object({ facts: RepoFactsSchema }))
+    .query(({ input }) => {
+      const hits = evaluateRepo(input.facts);
+      return { hits, riskScore: repoRiskScore(hits) };
+    }),
+
+  /** Claude reads the uploaded notices/filings and proposes questionnaire answers. */
+  suggestFacts: authedQuery
+    .input(z.object({ caseId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const kase = await ownCase(ctx.user.id, input.caseId);
+      const attachments = await attachmentsFor(ctx.user.id, kase.id);
+      if (!attachments.length) return { facts: null, notice: "Upload the contract, notices, or SEC filings first (PDF, image, or text)." };
+      try {
+        const suggested = await extractStructured({
+          schema: RepoFactsSchema,
+          system: `You read repossession case documents (retail installment contracts, Article 9 notices, title/UCC records, SEC filings for auto-receivables trusts) and extract facts exactly as stated. Use "unknown" or null for anything not shown; never infer. Dates as YYYY-MM-DD. Breach-of-peace and misrepresentation flags are true only if a document describes that conduct.`,
+          prompt: `Case: ${caseHeader(kase)}. Extract the questionnaire facts from the attached exhibits.`,
+          attachments,
+        });
+        return { facts: { ...suggested, state: kase.state }, notice: "Suggested answers loaded — review each one before saving." };
+      } catch (error) {
+        return { facts: null, notice: error instanceof AiUnavailable ? `${error.message} Answer the questionnaire manually.` : "Could not read the documents automatically. Answer the questionnaire manually." };
       }
     }),
 
-  /** Repo-service / creditor document demand sender (generates the checklist letter). */
-  generateDocumentDemand: authedQuery
-    .input(z.object({ caseId: z.number().int().positive(), sendTo: z.enum(["creditor", "repo_agency", "both"]) }))
-    .query(async ({ ctx, input }) => {
+  generateDraft: authedQuery
+    .input(z.object({ caseId: z.number().int().positive(), draftType: z.enum(DRAFT_TYPES), sendTo: z.enum(["creditor", "repo_agency", "both"]).default("both"), useAi: z.boolean().default(true) }))
+    .mutation(async ({ ctx, input }) => {
       const db = getDb();
-      const kase = await db.query.repoCases.findFirst({ where: and(eq(repoCases.id, input.caseId), eq(repoCases.userId, ctx.user.id)) });
-      if (!kase) throw new TRPCError({ code: "NOT_FOUND" });
-      try {
-        const letter = await ask(
-`Draft a certified-mail DOCUMENT DEMAND for ${input.sendTo} in the matter of ${kase.creditorName} / ${kase.vehicle}${kase.vin ? ` VIN ${kase.vin}` : ""}.
-Demand the following, itemized, within 30 days: ${DEMAND_CHECKLIST.join(" | ")}.
-Reference the UCC self-help frame: ${UCC_SELF_HELP["9-609"]} ${UCC_SELF_HELP["9-611"]} ${UCC_SELF_HELP["9-613"]}; Florida: ${STATE_SELF_HELP.FL.citation}; FDCPA §1692f(6). Reserve all rights; note non-production supports inference of no present right to possession (Wright v. Santander, M.D. Fla.).`
-        );
-        return { letter };
-      } catch (e) {
-        return { letter: "", unavailable: "Drafting unavailable. Retry." };
+      const kase = await ownCase(ctx.user.id, input.caseId);
+      const [violations, docs] = await Promise.all([
+        db.select().from(repoViolations).where(and(eq(repoViolations.caseId, kase.id), eq(repoViolations.userId, ctx.user.id))),
+        db.select().from(repoDocuments).where(and(eq(repoDocuments.caseId, kase.id), eq(repoDocuments.userId, ctx.user.id))).orderBy(asc(repoDocuments.createdAt)),
+      ]);
+      const consumer = ctx.user.name || "Debtor";
+      const template = templateDraft(input.draftType, kase, violations, docs, consumer, input.sendTo);
+      let body = template;
+      let source: "ai" | "template" = "template";
+      let notice: string | undefined;
+      if (input.useAi) {
+        try {
+          const facts = factsOf(kase);
+          body = await generateDraft({
+            system: SYSTEM_PROMPT,
+            prompt: `Draft type: ${input.draftType.replaceAll("_", " ")}.\nCase: ${caseHeader(kase)}.\nQuestionnaire facts (JSON): ${JSON.stringify(facts)}\nStatutory frame: UCC ${Object.entries(UCC_SELF_HELP).map(([k, v]) => `${k}: ${v}`).join(" | ")}; ${STATE_SELF_HELP[kase.state].citation}: ${STATE_SELF_HELP[kase.state].text}; ${FDCPA_REPO["1692f(6)"]}\nCase anchors (cite by name only): ${CASE_ANCHORS.map((c) => `${c.name} (${c.court}) — ${c.role}`).join("; ")}.\n\nExpand the following template into a complete, polished draft. Keep its sections and every citation; fill bracketed placeholders only from the facts above, otherwise leave them bracketed. Keep the closing attorney-review line.\n\n---\n${template}`,
+            attachments: input.draftType === "special_report" || input.draftType === "federal_complaint" ? await attachmentsFor(ctx.user.id, kase.id, 5) : [],
+            effort: "high",
+          });
+          source = "ai";
+        } catch (error) {
+          notice = error instanceof AiUnavailable ? `${error.message} A template draft was generated instead.` : "AI drafting failed; a template draft was generated instead.";
+        }
       }
+      const [{ id }] = await db.insert(repoDrafts).values({ userId: ctx.user.id, caseId: kase.id, draftType: input.draftType, body, source }).$returningId();
+      await db.update(repoCases).set({ status: input.draftType === "document_demand" && kase.status === "intake" ? "demand_sent" : kase.status === "analyzed" ? "drafted" : kase.status }).where(eq(repoCases.id, kase.id));
+      await db.insert(repoEvents).values({ userId: ctx.user.id, caseId: kase.id, type: "draft", message: `${input.draftType.replaceAll("_", " ")} drafted (${source === "ai" ? "AI-assisted" : "template"}) for attorney review.` });
+      return { id, body, source, notice };
     }),
 
-  caseTimeline: authedQuery
-    .input(z.object({ caseId: z.number().int().positive() }))
-    .query(async ({ ctx, input }) =>
-      getDb().select().from(repoEvents).where(and(eq(repoEvents.caseId, input.caseId), eq(repoEvents.userId, ctx.user.id))).orderBy(desc(repoEvents.createdAt))),
-
-  caseBundle: authedQuery
-    .input(z.object({ caseId: z.number().int().positive() }))
-    .query(async ({ ctx, input }) => {
-      const db = getDb();
-      const docs = await db.select().from(repoDocuments).where(and(eq(repoDocuments.caseId, input.caseId), eq(repoDocuments.userId, ctx.user.id))).orderBy(repoDocuments.createdAt);
-      const files = await Promise.all(docs.map(async d => ({
-        exhibit: d.exhibitLabel, docType: d.docType, name: d.fileName,
-        url: (await storage.getPresignedUrl({ key: d.fileKey, download: true })).url,
-      })));
-      const kase = await db.query.repoCases.findFirst({ where: eq(repoCases.id, input.caseId) });
-      const manifest = `# REPOSSESSION CASE BUNDLE — ${kase?.creditorName ?? ""} / ${kase?.vehicle ?? ""}\n${files.map((f, i) => `${String(i + 1).padStart(2, "0")}. ${f.exhibit} [${f.docType}] ${f.name}\n    ${f.url}`).join("\n")}\n`;
-      return { manifest, files };
+  saveDraft: authedQuery
+    .input(z.object({ id: z.number().int().positive(), body: z.string().min(20).max(120_000) }))
+    .mutation(async ({ ctx, input }) => {
+      const draft = await getDb().query.repoDrafts.findFirst({ where: and(eq(repoDrafts.id, input.id), eq(repoDrafts.userId, ctx.user.id)) });
+      if (!draft) throw new TRPCError({ code: "NOT_FOUND" });
+      await getDb().update(repoDrafts).set({ body: input.body, source: "edited" }).where(eq(repoDrafts.id, draft.id));
+      return { ok: true };
     }),
+
+  reference: authedQuery.query(() => ({ checklist: DEMAND_CHECKLIST, secChain: SEC_EVIDENCE_CHAIN, anchors: CASE_ANCHORS, docTypes: DOC_TYPES })),
 });

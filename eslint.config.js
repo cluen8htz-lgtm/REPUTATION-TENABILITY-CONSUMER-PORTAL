@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', '.data', 'dev-dist']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -24,6 +24,7 @@ export default defineConfig([
     files: ['src/components/ui/**/*.tsx', 'src/providers/trpc.tsx'],
     rules: {
       'react-refresh/only-export-components': 'off',
+      'react-hooks/set-state-in-effect': 'off',
     },
   },
 ])

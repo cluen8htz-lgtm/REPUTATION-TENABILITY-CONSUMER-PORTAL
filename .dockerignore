@@ -1,8 +1,9 @@
 node_modules
 dist
-.git
+dev-dist
+.data
 .env
 .env.*
 !.env.example
-*.swp
-*.log
+.git
+coverage

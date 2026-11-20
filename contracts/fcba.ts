@@ -21,7 +21,7 @@ export const FCBA_RULES = [
     mark: "triangle",
     markTarget: "creditLimit",
     annotation:
-      "⚠ RED TRIANGLE — CREDIT LIMIT IS A CEILING, NOT A TRANSACTION. The origination extension of credit (nonsale credit, 12 C.F.R. §1026.8(b)) was never disclosed by amount, date, and brief identification as required by 15 U.S.C. §1637(b)(2). See Comment 8(b)-1, 8(b)-4.",
+      "RED TRIANGLE — CREDIT LIMIT IS A CEILING, NOT A TRANSACTION. The origination extension of credit (nonsale credit, 12 C.F.R. §1026.8(b)) was never disclosed by amount, date, and brief identification as required by 15 U.S.C. §1637(b)(2). See Comment 8(b)-1, 8(b)-4.",
     exhibitCategory: "Periodic Statements",
   },
   {
@@ -149,7 +149,7 @@ export const FCBA_RULES = [
     title: "Finance-charge arithmetic impossibility",
     statute: "15 U.S.C. §1637(b)(7); Cardmember Agreement daily-balance clause",
     condition:
-      "Interest charged exceeds the maximum lawful charge on the disclosed balance at the disclosed APR (e.g., $731.95 YTD vs ≈$18.44 max on $69 at 26.74%).",
+      "Interest charged exceeds the maximum lawful charge on the disclosed balance at the disclosed APR (e.g., $731.95 YTD vs about $18.44 max on $69 at 26.74%).",
     mark: "bracket",
     markTarget: "ytdTotals",
     annotation:

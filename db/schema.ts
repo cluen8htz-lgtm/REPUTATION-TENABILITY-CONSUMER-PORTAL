@@ -16,6 +16,7 @@ export const users = mysqlTable("users", {
   name: varchar("name", { length: 255 }),
   email: varchar("email", { length: 320 }),
   avatar: text("avatar"),
+  passwordHash: varchar("passwordHash", { length: 255 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
@@ -108,9 +109,15 @@ export const fcbaStatements = mysqlTable("fcbaStatements", {
   folder: varchar("folder", { length: 120 }).notNull(),
   cycle: varchar("cycle", { length: 40 }),
   isFirstStatement: boolean("isFirstStatement").default(false).notNull(),
+  contentType: varchar("contentType", { length: 180 }),
+  size: int("size").default(0).notNull(),
   analysisStatus: mysqlEnum("analysisStatus", ["pending", "analyzing", "complete", "failed"]).default("pending").notNull(),
+  analysisError: varchar("analysisError", { length: 500 }),
+  extractedFacts: text("extractedFacts"),
+  factsSource: mysqlEnum("factsSource", ["ai", "manual", "ai_reviewed"]),
   annotatedFileKey: varchar("annotatedFileKey", { length: 700 }),
   complianceScore: int("complianceScore"),
+  analyzedAt: timestamp("analyzedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -125,6 +132,8 @@ export const fcbaViolations = mysqlTable("fcbaViolations", {
   excerpt: text("excerpt").notNull(),
   annotation: text("annotation").notNull(),
   mark: varchar("mark", { length: 20 }).notNull(),
+  markTarget: varchar("markTarget", { length: 40 }),
+  page: int("page"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -141,6 +150,10 @@ export const fcbaDisputes = mysqlTable("fcbaDisputes", {
   trackingNumbers: varchar("trackingNumbers", { length: 300 }),
   ackDeadline: varchar("ackDeadline", { length: 30 }),
   resolveDeadline: varchar("resolveDeadline", { length: 30 }),
+  letterDraft: text("letterDraft"),
+  letterSource: mysqlEnum("letterSource", ["ai", "template", "edited"]),
+  lastResponseClass: varchar("lastResponseClass", { length: 20 }),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -168,6 +181,9 @@ export const repoCases = mysqlTable("repoCases", {
   saleDate: varchar("saleDate", { length: 25 }),
   rcSignDate: varchar("rcSignDate", { length: 25 }),
   status: mysqlEnum("status", ["intake", "demand_sent", "analyzed", "drafted", "arbitration", "resolved"]).default("intake").notNull(),
+  facts: text("facts"),
+  riskScore: int("riskScore"),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -179,8 +195,21 @@ export const repoDocuments = mysqlTable("repoDocuments", {
   fileName: varchar("fileName", { length: 512 }).notNull(),
   exhibitLabel: varchar("exhibitLabel", { length: 20 }).notNull(),
   docType: mysqlEnum("docType", ["contract", "notice_611", "notice_613", "notice_616", "default_notice", "notice_of_sale", "ucc1", "prospectus_424b5", "report_10k", "report_8k", "sales_servicing_agreement", "pacer_case", "dmv_title", "repo_work_order", "other"]).notNull(),
+  contentType: varchar("contentType", { length: 180 }),
+  size: int("size").default(0).notNull(),
   analysisStatus: mysqlEnum("analysisStatus", ["pending", "analyzing", "complete", "failed"]).default("pending").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const repoDrafts = mysqlTable("repoDrafts", {
+  id: serial("id").primaryKey(),
+  userId: bigint("userId", { mode: "number", unsigned: true }).notNull(),
+  caseId: bigint("caseId", { mode: "number", unsigned: true }).notNull(),
+  draftType: mysqlEnum("draftType", ["document_demand", "notice_of_demand", "federal_complaint", "special_report", "sec_due_diligence"]).notNull(),
+  body: text("body").notNull(),
+  source: mysqlEnum("source", ["ai", "template", "edited"]).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 export const repoViolations = mysqlTable("repoViolations", {
@@ -193,6 +222,7 @@ export const repoViolations = mysqlTable("repoViolations", {
   severity: mysqlEnum("severity", ["critical", "major", "minor"]).notNull(),
   excerpt: text("excerpt").notNull(),
   annotation: text("annotation").notNull(),
+  basis: mysqlEnum("basis", ["rule", "ai"]).default("rule").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
@@ -213,3 +243,10 @@ export type CourtCase = typeof courtCases.$inferSelect;
 export type DocumentRecord = typeof documents.$inferSelect;
 export type CallLog = typeof callLogs.$inferSelect;
 export type VideoLesson = typeof videoLessons.$inferSelect;
+export type FcbaStatement = typeof fcbaStatements.$inferSelect;
+export type FcbaViolation = typeof fcbaViolations.$inferSelect;
+export type FcbaDispute = typeof fcbaDisputes.$inferSelect;
+export type RepoCase = typeof repoCases.$inferSelect;
+export type RepoDocument = typeof repoDocuments.$inferSelect;
+export type RepoViolation = typeof repoViolations.$inferSelect;
+export type RepoDraft = typeof repoDrafts.$inferSelect;

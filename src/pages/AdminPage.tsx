@@ -51,7 +51,7 @@ export default function AdminPage() {
     try {
       const { url } = await utils.portal.adminDocumentUrl.fetch({ id });
       if (preview) preview.location.href = url;
-      else window.location.href = url;
+      else window.location.assign(url);
     } catch {
       preview?.close();
       setMessage("Could not open that document. Check storage provisioning and try again.");

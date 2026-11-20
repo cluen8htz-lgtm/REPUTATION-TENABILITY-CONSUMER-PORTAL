@@ -1,4 +1,4 @@
-import { ArrowRight, CalendarDays, CloudOff, FileCheck2, FolderUp, PhoneCall } from "lucide-react";
+import { ArrowRight, CalendarDays, CalendarPlus, Car, CloudOff, FileCheck2, FolderUp, PhoneCall, TriangleAlert } from "lucide-react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router";
 import { trpc } from "@/providers/trpc";
@@ -15,7 +15,8 @@ export default function DashboardPage() {
   const activeCases = cases.filter((item) => item.status !== "closed");
   const reviewed = documents.filter((item) => item.reviewStatus === "reviewed").length;
   const reviewProgress = documents.length ? Math.round((reviewed / documents.length) * 100) : 0;
-  const deadlines = activeCases.filter((item) => item.nextDeadline).sort((a, b) => (a.nextDeadline || "").localeCompare(b.nextDeadline || ""));
+  const deadlines = data?.deadlines ?? [];
+  const today = new Date().toISOString().slice(0, 10);
 
   return <>
     <PageTitle eyebrow="CLIENT WORKSPACE" title="Your financial record, organized." description="Track case information, preserve source documents, and keep educational guidance separate from staff review." action={<Link className="gold-button" to="/portal/documents">Upload a document<FolderUp /></Link>} />
@@ -39,10 +40,16 @@ export default function DashboardPage() {
 
       <aside className="work-section deadline-section">
         <div className="work-section-heading"><h2>Dates to verify</h2><CalendarDays /></div>
-        {deadlines.length === 0 ? <p className="muted-copy">No dates have been entered. Dates you add remain unverified until reviewed.</p> : <ul className="deadline-list">{deadlines.slice(0, 4).map((item) => <li key={item.id}><time>{formatDate(item.nextDeadline)}</time><span><strong>{item.deadlineLabel || "Entered case date"}</strong><small>{item.title} · unverified</small></span></li>)}</ul>}
+        {deadlines.length === 0 ? <p className="muted-copy">No dates yet. Court dates you enter and FCBA clocks from your disputes appear here.</p> : <ul className="deadline-list">{deadlines.slice(0, 6).map((item, index) => <li key={`${item.href}-${index}`} className={item.date.slice(0, 10) < today ? "overdue" : ""}><time>{formatDate(item.date.slice(0, 10))}</time><span><Link to={item.href}><strong>{item.label}</strong></Link><small>{item.context} · {item.verified ? "statutory clock" : "unverified"}</small></span></li>)}</ul>}
+        <a className="calendar-link" href="/api/calendar/deadlines.ics"><CalendarPlus />Add to my calendar</a>
         <div className="integration-note"><CloudOff /><div><strong>Docket Alarm not connected</strong><p>Court entries are manual in this release. Live synchronization requires approved API credentials.</p></div></div>
       </aside>
     </div>
+
+    <section className="module-tiles">
+      <Link to="/portal/billing-error"><TriangleAlert /><span><strong>Billing error</strong><small>{data?.fcba.exhibits ?? 0} exhibit(s) · {data?.fcba.findings ?? 0} finding(s){data?.fcba.critical ? ` · ${data.fcba.critical} critical` : ""} · {data?.fcba.disputes ?? 0} dispute(s)</small></span><ArrowRight /></Link>
+      <Link to="/portal/repossession"><Car /><span><strong>Repossession</strong><small>{data?.repo.cases ?? 0} case(s){data?.repo.cases ? ` · highest issue score ${data.repo.maxRisk}/100` : ""}</small></span><ArrowRight /></Link>
+    </section>
 
     <section className="quick-actions">
       <Link to="/portal/documents"><FileCheck2 /><span><strong>Build your file</strong><small>Statements, reports, mail, and court papers</small></span><ArrowRight /></Link>

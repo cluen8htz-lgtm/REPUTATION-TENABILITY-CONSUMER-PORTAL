@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { secureHeaders } from "hono/secure-headers";
 import type { HttpBindings } from "@hono/node-server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "./router";
@@ -10,8 +11,37 @@ import { Paths } from "@contracts/constants";
 import { log } from "./lib/logger";
 import { handleClientLog } from "./lib/clientlog";
 import { REQUEST_ID_HEADER, runWithRequestId } from "./lib/requestcontext";
+import { registerFileRoutes } from "./files-route";
+import { usingDevSecret } from "./lib/env";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
+
+if (usingDevSecret) log.warn("APP_SECRET is not set — using an insecure development secret. Never deploy like this.");
+
+app.use(
+  "*",
+  secureHeaders({
+    strictTransportSecurity: env.isProduction ? "max-age=63072000; includeSubDomains" : false,
+    referrerPolicy: "strict-origin-when-cross-origin",
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: env.isProduction
+      ? {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", "data:", "blob:"],
+          fontSrc: ["'self'", "data:"],
+          connectSrc: ["'self'"],
+          frameSrc: ["'self'", "https://www.youtube-nocookie.com", "https://player.vimeo.com"],
+          frameAncestors: ["'none'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+        }
+      : undefined,
+    permissionsPolicy: { camera: ["self"], microphone: [], geolocation: [] },
+  }),
+);
 
 // One middleware for both halves of request observability, because they need the
 // same scope and the same id:
@@ -58,8 +88,10 @@ app.use("*", async (c, next) => {
 // rebuild throw `TypeError: Cannot read private member #state ...`, so every
 // bodyless request (DELETE/PATCH on the app's own REST routes) 500s at dispatch.
 // /api/log keeps its own 64KB caps in lib/clientlog.ts, so it needs no middleware.
-app.use("/api/trpc/*", bodyLimit({ maxSize: 50 * 1024 * 1024 }));
+app.use("/api/trpc/*", bodyLimit({ maxSize: 25 * 1024 * 1024 }));
 app.get(Paths.oauthCallback, createOAuthCallbackHandler());
+app.get("/api/health", (c) => c.json({ ok: true, ts: Date.now() }));
+registerFileRoutes(app);
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({
     endpoint: "/api/trpc",
@@ -79,7 +111,7 @@ app.post(
 );
 app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
-// Unhandled request errors must reach /tmp/kimi-logs/app.log, not just stdout:
+// Unhandled request errors must reach the app log, not just stdout:
 // that file is what the building agent reads when a preview 500s, and without
 // this the log looks clean while the request actually failed. Response stays a
 // generic 500 (no stack leaked to the caller); the detail goes to the log only.

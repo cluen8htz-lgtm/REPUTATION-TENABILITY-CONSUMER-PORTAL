@@ -5,7 +5,7 @@ import { trpc } from "@/providers/trpc";
 import { EmptyState, LoadingPanel, PageTitle, StatusBadge } from "@/components/PortalComponents";
 import { formatDate } from "@/lib/format";
 
-const MAX_FILE_SIZE = 6_000_000;
+const MAX_FILE_SIZE = 15_000_000;
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -65,7 +65,7 @@ export default function DocumentsPage() {
     if (!file) return;
     if (file.size > MAX_FILE_SIZE) {
       setSelectedFile(null);
-      setMessage("That file is larger than 6 MB. Please upload a smaller copy in this release.");
+      setMessage("That file is larger than 15 MB. Please upload a smaller copy.");
       return;
     }
     setSelectedFile(file);
@@ -130,7 +130,7 @@ export default function DocumentsPage() {
       <div className="upload-sources">
         <input ref={fileInput} className="visually-hidden" type="file" accept=".pdf,image/*,.txt,.doc,.docx,.xls,.xlsx" onChange={(event) => { chooseFile(event.target.files?.[0]); event.target.value = ""; }} />
         <input ref={cameraInput} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => { chooseFile(event.target.files?.[0]); event.target.value = ""; }} />
-        <button type="button" onClick={() => fileInput.current?.click()}><Upload /><span><strong>Choose a file</strong><small>PDF, image, Office document, or text · up to 6 MB</small></span></button>
+        <button type="button" onClick={() => fileInput.current?.click()}><Upload /><span><strong>Choose a file</strong><small>PDF, image, Office document, or text · up to 15 MB</small></span></button>
         <button type="button" onClick={() => cameraInput.current?.click()}><Camera /><span><strong>Use phone camera</strong><small>Photograph mail or paper documents</small></span></button>
       </div>
       <div className="upload-details">

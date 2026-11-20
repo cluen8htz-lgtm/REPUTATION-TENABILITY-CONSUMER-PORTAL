@@ -4,6 +4,7 @@ import { BookOpen, BriefcaseBusiness, Car, FileText, LayoutDashboard, LogOut, Me
 import { useAuth } from "@/hooks/useAuth";
 import { LOGIN_PATH } from "@/const";
 import { AuthLayoutSkeleton } from "./AuthLayoutSkeleton";
+import { CommandPalette } from "./CommandPalette";
 
 const navigation = [
   { to: "/portal", label: "Overview", icon: LayoutDashboard, end: true },
@@ -29,7 +30,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
   if (isLoading) return <AuthLayoutSkeleton />;
   if (!user) return null;
 
-  const links = user.role === "admin" ? navigation : navigation;
+  const links = navigation;
 
   return (
     <div className="workspace-shell">
@@ -38,6 +39,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
           <img src="/reputation-tenability-logo.png" alt="" />
           <span>REPUTATION<br />TENABILITY</span>
         </NavLink>
+        <button type="button" className="palette-hint" onClick={() => window.dispatchEvent(new Event("open-command-palette"))}><span>Search & jump</span><kbd>⌘K</kbd></button>
         <nav aria-label="Client workspace">
           {links.map((item) => <WorkspaceLink key={item.to} {...item} />)}
           {user.role === "admin" && <NavLink to="/portal/admin" className={({ isActive }) => `workspace-link ${isActive ? "active" : ""}`}><UserRound />Staff review</NavLink>}
@@ -64,7 +66,8 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
         <button type="button" className="mobile-signout" onClick={logout}><LogOut />Sign out</button>
       </div>
 
-      <main className="workspace-main">{children}</main>
+      <CommandPalette isAdmin={user.role === "admin"} />
+      <main className="workspace-main" id="main">{children}</main>
     </div>
   );
 }

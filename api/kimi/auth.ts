@@ -37,14 +37,16 @@ async function exchangeAuthCode(
   return resp.json() as Promise<TokenResponse>;
 }
 
-const jwks = jose.createRemoteJWKSet(
-  new URL(`${env.kimiAuthUrl}/api/.well-known/jwks.json`),
-);
+let jwks: ReturnType<typeof jose.createRemoteJWKSet> | undefined;
+function getJwks() {
+  jwks ??= jose.createRemoteJWKSet(new URL(`${env.kimiAuthUrl}/api/.well-known/jwks.json`));
+  return jwks;
+}
 
 async function verifyAccessToken(
   accessToken: string,
 ): Promise<{ userId: string; clientId: string }> {
-  const { payload } = await jose.jwtVerify(accessToken, jwks);
+  const { payload } = await jose.jwtVerify(accessToken, getJwks());
   const userId = payload.user_id as string;
   const clientId = payload.client_id as string;
   if (!userId) {
@@ -57,7 +59,6 @@ export async function authenticateRequest(headers: Headers) {
   const cookies = cookie.parse(headers.get("cookie") || "");
   const token = cookies[Session.cookieName];
   if (!token) {
-    console.warn("[auth] No session cookie found in request.");
     throw Errors.forbidden("Invalid authentication token.");
   }
   const claim = await verifySessionToken(token);
@@ -73,6 +74,7 @@ export async function authenticateRequest(headers: Headers) {
 
 export function createOAuthCallbackHandler() {
   return async (c: Context) => {
+    if (!env.kimiAuthUrl) return c.json({ error: "Kimi OAuth is not configured" }, 404);
     const code = c.req.query("code");
     const state = c.req.query("state");
     const error = c.req.query("error");
@@ -94,6 +96,10 @@ export function createOAuthCallbackHandler() {
 
     try {
       const redirectUri = atob(state);
+      // Only accept a redirect back to this same origin (prevents token replay to foreign hosts).
+      if (new URL(redirectUri).host !== new URL(c.req.url).host) {
+        return c.json({ error: "Invalid OAuth state" }, 400);
+      }
       const tokenResp = await exchangeAuthCode(code, redirectUri);
       const { userId } = await verifyAccessToken(tokenResp.access_token);
       const userProfile = await kimiUsers.getProfile(tokenResp.access_token);
@@ -119,7 +125,7 @@ export function createOAuthCallbackHandler() {
         maxAge: Session.maxAgeMs / 1000,
       });
 
-      return c.redirect("/", 302);
+      return c.redirect("/portal", 302);
     } catch (error) {
       console.error("[OAuth] Callback failed", error);
       return c.json({ error: "OAuth callback failed" }, 500);

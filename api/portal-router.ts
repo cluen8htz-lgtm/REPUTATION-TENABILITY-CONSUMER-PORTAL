@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { generateText } from "ai";
 import { adminQuery, authedQuery, createRouter } from "./middleware";
 import { getDb } from "./queries/connection";
 import {
@@ -9,13 +8,16 @@ import {
   clientProfiles,
   courtCases,
   documents,
+  fcbaDisputes,
+  fcbaStatements,
+  fcbaViolations,
+  repoCases,
   users,
   videoLessons,
 } from "@db/schema";
 import { DOCUMENT_CATEGORIES, SERVICE_AREAS } from "@contracts/portal";
-import { storage } from "./lib/storage";
-import { listModels, classifyAiError } from "./ai/ai-client";
-import { kimiGw } from "./ai/provider";
+import { blob, decodeUpload, makeKey, sniffContentType } from "./lib/blob";
+import { AiUnavailable, generateDraft } from "./ai/llm";
 
 const dateInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal("")).optional();
 const countySchema = z.string().min(2).max(80);
@@ -30,13 +32,33 @@ function assertServiceArea(state: string, county: string) {
 export const portalRouter = createRouter({
   dashboard: authedQuery.query(async ({ ctx }) => {
     const db = getDb();
-    const [profile, cases, docs, calls] = await Promise.all([
+    const [profile, cases, docs, calls, disputes, statements, findings, repo] = await Promise.all([
       db.query.clientProfiles.findFirst({ where: eq(clientProfiles.userId, ctx.user.id) }),
       db.select().from(courtCases).where(eq(courtCases.userId, ctx.user.id)).orderBy(desc(courtCases.createdAt)),
       db.select().from(documents).where(eq(documents.userId, ctx.user.id)).orderBy(desc(documents.createdAt)),
       db.select().from(callLogs).where(eq(callLogs.userId, ctx.user.id)).orderBy(desc(callLogs.calledAt)),
+      db.select().from(fcbaDisputes).where(eq(fcbaDisputes.userId, ctx.user.id)),
+      db.select({ id: fcbaStatements.id, score: fcbaStatements.complianceScore }).from(fcbaStatements).where(eq(fcbaStatements.userId, ctx.user.id)),
+      db.select({ severity: fcbaViolations.severity }).from(fcbaViolations).where(eq(fcbaViolations.userId, ctx.user.id)),
+      db.select().from(repoCases).where(eq(repoCases.userId, ctx.user.id)),
     ]);
-    return { profile, cases, documents: docs, calls };
+    const deadlines = [
+      ...cases.filter((c) => c.status !== "closed" && c.nextDeadline).map((c) => ({ date: c.nextDeadline!, label: c.deadlineLabel || "Entered case date", context: c.title, href: "/portal/cases", verified: false })),
+      ...disputes.filter((d) => d.status !== "resolved").flatMap((d) => [
+        d.ackDeadline && d.status === "open" ? { date: d.ackDeadline, label: "FCBA acknowledgment due (30 days)", context: `${d.creditorName} ····${d.accountLast4}`, href: "/portal/billing-error", verified: true } : null,
+        d.resolveDeadline ? { date: d.resolveDeadline, label: "FCBA resolution due (≤90 days)", context: `${d.creditorName} ····${d.accountLast4}`, href: "/portal/billing-error", verified: true } : null,
+      ]).filter((x): x is NonNullable<typeof x> => Boolean(x)),
+      ...repo.filter((k) => k.saleDate && k.status !== "resolved").map((k) => ({ date: k.saleDate!, label: "Scheduled disposition — redemption ends", context: k.vehicle, href: "/portal/repossession", verified: false })),
+    ].sort((a, b) => a.date.localeCompare(b.date));
+    return {
+      profile,
+      cases,
+      documents: docs,
+      calls,
+      deadlines,
+      fcba: { exhibits: statements.length, findings: findings.length, critical: findings.filter((f) => f.severity === "critical").length, disputes: disputes.length },
+      repo: { cases: repo.length, maxRisk: repo.reduce((m, k) => Math.max(m, k.riskScore ?? 0), 0) },
+    };
   }),
 
   saveIntake: authedQuery
@@ -96,15 +118,17 @@ export const portalRouter = createRouter({
   uploadDocument: authedQuery
     .input(z.object({
       name: z.string().min(1).max(240),
-      contentBase64: z.string().min(1).max(8_500_000),
+      contentBase64: z.string().min(1).max(21_000_000),
       contentType: z.string().max(180).optional(),
       category: z.string().min(2).max(80),
       caseId: z.number().int().positive().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const bytes = Uint8Array.from(Buffer.from(input.contentBase64, "base64"));
-      if (bytes.byteLength > 6_000_000) {
-        throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: "Please upload files smaller than 6 MB in this MVP." });
+      let bytes: Uint8Array;
+      try {
+        bytes = decodeUpload(input.contentBase64);
+      } catch (error) {
+        throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: (error as Error).message });
       }
       const category = DOCUMENT_CATEGORIES.find((item) => item.value === input.category) ?? DOCUMENT_CATEGORIES.at(-1)!;
       if (input.caseId) {
@@ -113,18 +137,14 @@ export const portalRouter = createRouter({
         });
         if (!ownedCase) throw new TRPCError({ code: "BAD_REQUEST", message: "The selected case was not found." });
       }
-      const safeName = input.name.replace(/[^\p{L}\p{N}._ -]/gu, "_");
-      const saved = await storage.uploadFile({
-        fileContent: bytes,
-        fileName: `u/${ctx.user.id}/${Date.now()}-${safeName}`,
-        contentType: input.contentType,
-      });
+      const contentType = sniffContentType(bytes, input.contentType);
+      const saved = await blob().put(makeKey(`u/${ctx.user.id}`, input.name), bytes, contentType);
       const [{ id }] = await getDb().insert(documents).values({
         userId: ctx.user.id,
         caseId: input.caseId,
         fileKey: saved.key,
         fileName: input.name,
-        contentType: input.contentType,
+        contentType,
         size: saved.size,
         category: category.value,
         folder: category.folder,
@@ -139,7 +159,7 @@ export const portalRouter = createRouter({
         where: and(eq(documents.id, input.id), eq(documents.userId, ctx.user.id)),
       });
       if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
-      return storage.getPresignedUrl({ key: doc.fileKey, download: true });
+      return { url: `/api/files/document/${doc.id}` };
     }),
 
   removeDocument: authedQuery
@@ -150,7 +170,7 @@ export const portalRouter = createRouter({
       });
       if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
       await getDb().delete(documents).where(eq(documents.id, doc.id));
-      await storage.deleteFile({ fileKey: doc.fileKey });
+      await blob().remove(doc.fileKey).catch(() => undefined);
       return { ok: true };
     }),
 
@@ -186,20 +206,18 @@ export const portalRouter = createRouter({
     .input(z.object({ question: z.string().min(5).max(2000) }))
     .mutation(async ({ input }) => {
       try {
-        const { defaultModelId } = await listModels();
-        const result = await generateText({
-          model: kimiGw(defaultModelId),
+        const answer = await generateDraft({
           system: `You are the Reputation Tenability consumer-education assistant. Provide cautious general education about debt-collection lawsuits, credit reports, billing errors, and repossession. Never provide definitive legal advice, calculate a court deadline, promise deletion of accurate information, guarantee an outcome, or invent a citation. Distinguish allegations from proven facts. Encourage review by a licensed attorney or qualified legal aid for court action. Keep answers under 250 words and list practical record-organization steps when useful.`,
           prompt: input.question,
-          providerOptions: { "kimi-gw": { max_completion_tokens: 700 } },
+          effort: "low",
+          maxTokens: 2000,
         });
-        return { answer: result.text, unavailable: "" };
+        return { answer, unavailable: "" };
       } catch (error) {
-        const mapped = classifyAiError(error);
         return {
           answer: "",
-          unavailable: mapped.name === "AiTransient"
-            ? "The education assistant is temporarily unavailable. Please try again deliberately in a few minutes."
+          unavailable: error instanceof AiUnavailable && error.reason === "transient"
+            ? "The education assistant is temporarily unavailable. Please try again in a few minutes."
             : "The education assistant is not available right now. Your saved cases and documents remain available; contact staff for help.",
         };
       }
@@ -208,7 +226,7 @@ export const portalRouter = createRouter({
   adminOverview: adminQuery.query(async () => {
     const db = getDb();
     const [clients, cases, docs, videos] = await Promise.all([
-      db.select().from(users).orderBy(desc(users.createdAt)),
+      db.select({ id: users.id, name: users.name, email: users.email, role: users.role, createdAt: users.createdAt, lastSignInAt: users.lastSignInAt }).from(users).orderBy(desc(users.createdAt)),
       db.select().from(courtCases).orderBy(desc(courtCases.createdAt)),
       db.select().from(documents).orderBy(desc(documents.createdAt)),
       db.select().from(videoLessons).orderBy(desc(videoLessons.createdAt)),
@@ -221,7 +239,7 @@ export const portalRouter = createRouter({
     .query(async ({ input }) => {
       const doc = await getDb().query.documents.findFirst({ where: eq(documents.id, input.id) });
       if (!doc) throw new TRPCError({ code: "NOT_FOUND" });
-      return storage.getPresignedUrl({ key: doc.fileKey, download: true });
+      return { url: `/api/files/document/${doc.id}` };
     }),
 
   adminReviewDocument: adminQuery

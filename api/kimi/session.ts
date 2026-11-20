@@ -11,17 +11,14 @@ export async function signSessionToken(
   return new jose.SignJWT(payload)
     .setProtectedHeader({ alg: JWT_ALG })
     .setIssuedAt()
-    .setExpirationTime("1 year")
+    .setExpirationTime("30 days")
     .sign(secret);
 }
 
 export async function verifySessionToken(
   token: string,
 ): Promise<SessionPayload | null> {
-  if (!token) {
-    console.warn("[session] No token provided for verification.");
-    return null;
-  }
+  if (!token) return null;
   try {
     const secret = new TextEncoder().encode(env.appSecret);
     const { payload } = await jose.jwtVerify(token, secret, {
@@ -33,8 +30,7 @@ export async function verifySessionToken(
       return null;
     }
     return { unionId, clientId } as SessionPayload;
-  } catch (error) {
-    console.warn("[session] JWT verification failed:", error);
+  } catch {
     return null;
   }
 }

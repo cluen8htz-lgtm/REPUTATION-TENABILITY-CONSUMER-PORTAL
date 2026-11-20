@@ -1,19 +1,20 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 
-const templateRoot = path.resolve(import.meta.dirname);
+const root = path.resolve(import.meta.dirname);
 
 export default defineConfig({
-  root: templateRoot,
+  root,
   resolve: {
     alias: {
-      "@": path.resolve(templateRoot, "src"),
-      "@contracts": path.resolve(templateRoot, "contracts"),
-      "@assets": path.resolve(templateRoot, "attached_assets"),
+      "@": path.resolve(root, "src"),
+      "@contracts": path.resolve(root, "contracts"),
+      "@db": path.resolve(root, "db"),
     },
   },
   test: {
     environment: "node",
-    include: ["api/**/*.test.ts", "api/**/*.spec.ts"],
+    include: ["tests/unit/**/*.test.ts", "api/**/*.test.ts"],
+    testTimeout: 30_000,
   },
 });
