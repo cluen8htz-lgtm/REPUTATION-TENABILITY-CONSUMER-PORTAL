@@ -60,7 +60,7 @@ export default function Login() {
           {mode === "register" && <small className="hint">At least 10 characters, mixing three of: lowercase, uppercase, numbers, symbols.</small>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="gold-button wide" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}<ArrowRight /></button>
-          {(config.data?.registration !== false || setup) && <button type="button" className="text-switch" onClick={() => { setMode(mode === "signin" ? "register" : "signin"); setError(""); }}>{mode === "signin" ? "New client? Create an account" : "Already have an account? Sign in"}</button>}
+          {(config.data?.registration === true || setup) && <button type="button" className="text-switch" onClick={() => { setMode(mode === "signin" ? "register" : "signin"); setError(""); }}>{mode === "signin" ? "New client? Create an account" : "Already have an account? Sign in"}</button>}
           {config.data?.registration === false && !setup && <p className="hint">New clients receive their sign-in details from Reputation Tenability staff.</p>}
           {oauth && <><div className="divider"><span>or</span></div><a className="outline-button wide" href={oauth}>Continue with Kimi</a></>}
           <p className="legal-note">By continuing you agree that the workspace provides education and organization, not legal advice.</p>
