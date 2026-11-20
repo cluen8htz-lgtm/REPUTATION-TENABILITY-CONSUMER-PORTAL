@@ -1,0 +1,39 @@
+# Local full stack: MySQL 8 + the portal.  docker compose up --build
+# Then apply the schema once:  docker compose run --rm migrate
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: reputation_tenability
+      MYSQL_USER: rt
+      MYSQL_PASSWORD: rt-local-password
+      MYSQL_ROOT_PASSWORD: rt-local-root
+    ports: ["3306:3306"]
+    volumes: [db-data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      retries: 20
+
+  migrate:
+    build: { context: ., target: build }
+    command: npx drizzle-kit migrate
+    environment:
+      DATABASE_URL: mysql://rt:rt-local-password@db:3306/reputation_tenability
+    depends_on: { db: { condition: service_healthy } }
+    profiles: ["tools"]
+
+  app:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: mysql://rt:rt-local-password@db:3306/reputation_tenability
+      APP_SECRET: ${APP_SECRET:-change-me-local-only-secret-value-0123456789}
+      OWNER_EMAIL: ${OWNER_EMAIL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes: [uploads:/data]
+    depends_on: { db: { condition: service_healthy } }
+
+volumes:
+  db-data:
+  uploads:
