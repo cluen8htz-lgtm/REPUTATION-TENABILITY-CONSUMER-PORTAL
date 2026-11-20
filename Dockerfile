@@ -16,7 +16,6 @@ COPY prompts ./prompts
 COPY db/migrations ./db/migrations
 RUN mkdir -p /data/uploads && chown -R node:node /data /app
 USER node
-VOLUME ["/data"]
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "--enable-source-maps", "dist/boot.js"]
