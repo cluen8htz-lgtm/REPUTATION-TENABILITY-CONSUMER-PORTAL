@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { NavLink } from "react-router";
-import { BookOpen, BriefcaseBusiness, Car, FileText, LayoutDashboard, LogOut, Menu, PhoneCall, TriangleAlert, UserRound, X } from "lucide-react";
+import { BookOpen, BriefcaseBusiness, KeyRound, Car, FileText, LayoutDashboard, LogOut, Menu, PhoneCall, TriangleAlert, UserRound, X } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { LOGIN_PATH } from "@/const";
 import { AuthLayoutSkeleton } from "./AuthLayoutSkeleton";
@@ -15,6 +15,7 @@ const navigation = [
   { to: "/portal/billing-error", label: "Billing error", icon: TriangleAlert },
   { to: "/portal/repossession", label: "Repossession", icon: Car },
   { to: "/portal/learn", label: "Learn", icon: BookOpen },
+  { to: "/portal/account", label: "Account", icon: KeyRound },
 ];
 
 export default function AuthLayout({ children }: { children: ReactNode }) {

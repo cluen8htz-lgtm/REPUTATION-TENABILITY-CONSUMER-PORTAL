@@ -1,4 +1,4 @@
-import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
 const scrypt = promisify(scryptCb) as (password: string, salt: Buffer, keylen: number, options: { N: number; r: number; p: number; maxmem: number }) => Promise<Buffer>;
@@ -29,4 +29,17 @@ export function passwordProblem(password: string): string | null {
   if (classes < 3) return "Mix at least three of: lowercase, uppercase, numbers, symbols.";
   if (/^(password|letmein|welcome|qwerty|123456)/i.test(password)) return "That password is too common.";
   return null;
+}
+
+/** 16-character temporary password that always satisfies passwordProblem(). */
+export function generateTemporaryPassword(): string {
+  const sets = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789", "!@#$%*-_"];
+  const all = sets.join("");
+  const chars = sets.map((set) => set[randomInt(set.length)]);
+  while (chars.length < 16) chars.push(all[randomInt(all.length)]);
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookPlus, Check, Download, FileCheck2, Play, Users, Video } from "lucide-react";
+import { BookPlus, Check, Download, FileCheck2, KeyRound, Play, UserPlus, Users, Video } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { trpc } from "@/providers/trpc";
 import { EmptyState, LoadingPanel, PageTitle, StatusBadge } from "@/components/PortalComponents";
@@ -34,6 +34,14 @@ export default function AdminPage() {
     },
     onError: (error) => setMessage(error.message),
   });
+
+  const [invite, setInvite] = useState({ name: "", email: "", role: "user" as "user" | "admin" });
+  const [issued, setIssued] = useState<{ email: string | null; temporaryPassword: string } | null>(null);
+  const inviteClient = trpc.auth.inviteClient.useMutation({
+    onSuccess: async (result) => { setIssued(result); setInvite({ name: "", email: "", role: "user" }); await utils.portal.adminOverview.invalidate(); },
+    onError: (error) => setMessage(error.message),
+  });
+  const resetPassword = trpc.auth.resetClientPassword.useMutation({ onSuccess: setIssued, onError: (error) => setMessage(error.message) });
 
   if (authLoading || (user?.role === "admin" && overview.isLoading)) return <LoadingPanel />;
   if (user?.role !== "admin") return <><PageTitle eyebrow="STAFF REVIEW" title="Administrator access required." description="This workspace is restricted to authorized Reputation Tenability staff." /><div className="error-panel">Your current account does not have staff-review permission.</div></>;
@@ -89,6 +97,13 @@ export default function AdminPage() {
 
     {tab === "cases" && <section className="admin-section"><div className="admin-section-heading"><div><h2>Client-entered case records</h2><p>Dates and allegations are client-supplied until independently reviewed.</p></div></div>{data.cases.length === 0 ? <EmptyState title="No case records" text="Client-entered court records will appear here." /> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Client</th><th>Case</th><th>Court / number</th><th>Date to verify</th><th>Status</th></tr></thead><tbody>{data.cases.map((item) => <tr key={item.id}><td>{clientsById.get(item.userId)?.name || `Client #${item.userId}`}</td><td><strong>{item.title}</strong><small>{item.plaintiff} v. {item.defendant}</small></td><td>{item.court || "Not entered"}<small>{item.caseNumber || "No case number"}</small></td><td>{formatDate(item.nextDeadline)}<small>{item.deadlineLabel || "Unverified entry"}</small></td><td><StatusBadge status={item.status} /></td></tr>)}</tbody></table></div>}</section>}
 
-    {tab === "clients" && <section className="admin-section"><div className="admin-section-heading"><div><h2>Client accounts</h2><p>Authorized staff access only. Do not export or reuse client information for unsolicited marketing.</p></div></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Client</th><th>Email</th><th>Role</th><th>Joined</th></tr></thead><tbody>{data.clients.map((client) => <tr key={client.id}><td><strong>{client.name || "Unnamed client"}</strong></td><td>{client.email || "Not provided"}</td><td>{client.role}</td><td>{formatDate(client.createdAt)}</td></tr>)}</tbody></table></div></section>}
+    {tab === "clients" && <section className="admin-section"><div className="admin-section-heading"><div><h2>Client accounts</h2><p>Authorized staff access only. Do not export or reuse client information for unsolicited marketing.</p></div></div><form className="invite-form" onSubmit={(event) => { event.preventDefault(); inviteClient.mutate(invite); }}>
+        <label>Client name<input required minLength={2} value={invite.name} onChange={(e) => setInvite({ ...invite, name: e.target.value })} /></label>
+        <label>Email<input required type="email" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} /></label>
+        <label>Access<select value={invite.role} onChange={(e) => setInvite({ ...invite, role: e.target.value as "user" | "admin" })}><option value="user">Client</option><option value="admin">Staff</option></select></label>
+        <button className="gold-button" disabled={inviteClient.isPending}><UserPlus />{inviteClient.isPending ? "Creating…" : "Create account"}</button>
+      </form>
+      {issued && <div className="temp-password" role="status"><p><strong>Temporary password for {issued.email}</strong> — shown once. Share it securely (phone or in person, not in the same email as the sign-in link). Ask the client to change it under Account after signing in.</p><code>{issued.temporaryPassword}</code><button type="button" className="outline-button" onClick={() => navigator.clipboard.writeText(issued.temporaryPassword)}>Copy</button><button type="button" className="text-switch" onClick={() => setIssued(null)}>Done</button></div>}
+      <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Client</th><th>Email</th><th>Role</th><th>Joined</th><th>Last sign-in</th><th></th></tr></thead><tbody>{data.clients.map((client) => <tr key={client.id}><td><strong>{client.name || "Unnamed client"}</strong></td><td>{client.email || "Not provided"}</td><td>{client.role}</td><td>{formatDate(client.createdAt)}</td><td>{formatDate(client.lastSignInAt)}</td><td><button type="button" className="outline-button" disabled={resetPassword.isPending} onClick={() => { if (confirm(`Issue a new temporary password for ${client.email ?? client.name}? Their current password stops working.`)) resetPassword.mutate({ userId: client.id }); }}><KeyRound />Reset password</button></td></tr>)}</tbody></table></div></section>}
   </>;
 }

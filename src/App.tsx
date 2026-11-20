@@ -12,6 +12,7 @@ import LearningPage from "@/pages/LearningPage";
 import AdminPage from "@/pages/AdminPage";
 import FcbaPage from "@/pages/FcbaPage";
 import RepoPage from "@/pages/RepoPage";
+import AccountPage from "@/pages/AccountPage";
 
 function PortalLayout() {
   return <AuthLayout><Outlet /></AuthLayout>;
@@ -31,6 +32,7 @@ export default function App() {
       <Route path="admin" element={<AdminPage />} />
       <Route path="billing-error" element={<FcbaPage />} />
       <Route path="repossession" element={<RepoPage />} />
+      <Route path="account" element={<AccountPage />} />
     </Route>
     <Route path="*" element={<NotFound />} />
   </Routes>;

@@ -1,0 +1,40 @@
+# Production on a single Linux server: MySQL + portal + Caddy (automatic HTTPS).
+#   cp .env.example .env.production   # fill in values; DATABASE_URL is set below
+#   DOMAIN=portal.example.com docker compose -f deploy/docker-compose.vps.yml --env-file .env.production up -d --build
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: reputation_tenability
+      MYSQL_USER: rt
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+    volumes: [db-data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      retries: 20
+
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: ../.env.production
+    environment:
+      DATABASE_URL: mysql://rt:${MYSQL_PASSWORD}@db:3306/reputation_tenability
+      PUBLIC_URL: https://${DOMAIN:?set DOMAIN}
+    volumes: [uploads:/data]
+    depends_on: { db: { condition: service_healthy } }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${DOMAIN} --to app:3000
+    ports: ["80:80", "443:443"]
+    volumes: [caddy-data:/data]
+    depends_on: [app]
+
+volumes:
+  db-data:
+  uploads:
+  caddy-data:

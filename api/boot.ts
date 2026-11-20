@@ -128,6 +128,8 @@ app.onError((err, c) => {
 export default app;
 
 if (env.isProduction) {
+  const { runMigrations } = await import("./lib/migrate");
+  await runMigrations();
   const { serve } = await import("@hono/node-server");
   const { serveStaticFiles } = await import("./lib/vite");
   serveStaticFiles(app);
