@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Car, CreditCard, FileStack, Lock, Scale, ShieldCheck, Smartphone, Sparkles, Upload } from "lucide-react";
+import { ArrowRight, BookOpen, FileSearch, FileStack, Landmark, Scale, ShieldCheck, Smartphone, Upload } from "lucide-react";
 import { Link } from "react-router";
 import { useState } from "react";
 import { BRAND, SERVICE_AREAS } from "@contracts/portal";
@@ -11,6 +11,30 @@ const services = [
   { title: "Financial education", text: "Build practical knowledge about credit utilization, account records, and consumer finance." },
   { title: "Information and referrals", text: "Know when a court issue calls for a licensed attorney or qualified legal-aid organization." },
 ];
+
+const FOUNDATION = [
+  {
+    icon: Landmark,
+    title: "Informed Use of Credit",
+    cite: "15 U.S.C. § 1601",
+    text: "Promotes meaningful disclosure of credit terms so consumers can compare available credit, make informed decisions, and avoid the uninformed use of credit. It also addresses inaccurate and unfair credit-billing and credit-card practices.",
+    message: "Understand the terms. Compare the costs. Make informed credit decisions.",
+  },
+  {
+    icon: FileSearch,
+    title: "Accuracy and Fairness in Credit Reporting",
+    cite: "15 U.S.C. § 1681",
+    text: "Recognizes that the banking system depends upon fair and accurate credit reporting. It calls for reasonable procedures concerning the confidentiality, accuracy, relevancy, and proper use of consumer information, with fairness, impartiality, and respect for consumer privacy.",
+    message: "Review the record. Address inaccuracies. Expect fair treatment.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Protection From Abusive Debt Collection",
+    cite: "15 U.S.C. § 1692",
+    text: "Declares the purpose of eliminating abusive debt-collection practices and protecting consumers from conduct identified in the statute as abusive, deceptive, or unfair.",
+    message: "Document the conduct. Understand your rights. Prepare your response.",
+  },
+] as const;
 
 export default function Home() {
   const [shared, setShared] = useState(false);
@@ -30,12 +54,12 @@ export default function Home() {
     <div className="public-shell">
       <header className="public-header">
         <Link to="/" className="brand-lockup" aria-label="Reputation Tenability home">
-          <img src="/reputation-tenability-logo.png" alt="" />
-          <span><strong>REPUTATION TENABILITY</strong><small>FINANCIAL INTERVENTION · RESTORATION</small></span>
+          <img src="/reputation-tenability-logo-600.webp" alt="" />
+          <span><strong>REPUTATION TENABILITY</strong><small>FINANCIAL INTERVENTION AND RESTORATION</small></span>
         </Link>
         <nav className="public-nav" aria-label="Main navigation">
           <a href="#services">Services</a>
-          <a href="#engines">How it works</a>
+          <a href="#foundation">Your rights</a>
           <a href="#areas">Service areas</a>
           <a href="#education">Education</a>
         </nav>
@@ -45,13 +69,15 @@ export default function Home() {
       <main>
         <section className="portal-hero">
           <div className="hero-copy">
-            <p className="overline">YOUR RECORDS · YOUR CASE · YOUR NEXT STEP</p>
-            <h1>Turn financial paperwork into a <em>clear path forward.</em></h1>
-            <p className="hero-intro">A secure client workspace for debt-collection lawsuits, credit-report concerns, billing errors, and repossession records.</p>
+            <p className="overline">FINANCIAL INTERVENTION AND RESTORATION</p>
+            <h1>Informed Choices.<br />Accurate Reports.<br /><em>Fair Treatment.</em></h1>
+            <p className="hero-tagline">Know your rights. Protect your credit. Restore your name.</p>
+            <p className="hero-intro">A consumer-advocacy portal grounded in the purposes of <strong>15 U.S.C. §§ 1601, 1681, and 1692</strong>—meaningful disclosure of credit terms, fair and accurate credit reporting, and protection from abusive debt-collection practices.</p>
             <div className="hero-proof"><ShieldCheck aria-hidden="true" /><span>Private document storage<br />Staff-reviewed case organization</span></div>
+            <p className="hero-note">Organize your records, understand your rights, and prepare your next step through one secure client workspace.</p>
           </div>
           <div className="hero-portal">
-            <div className="logo-orbit"><img src="/reputation-tenability-logo.png" alt="Reputation Tenability" /></div>
+            <div className="logo-orbit"><img src="/reputation-tenability-logo-600.webp" alt="Reputation Tenability" /></div>
             <div className="portal-actions">
               <Link to="/portal/intake" className="portal-action primary"><span>Start secure intake</span><ArrowRight /></Link>
               <Link to="/portal" className="portal-action"><span>Open client workspace</span><ArrowRight /></Link>
@@ -73,39 +99,22 @@ export default function Home() {
           </div>
         </section>
 
-        <section id="engines" className="engine-section">
-          <div className="section-label"><span>TWO ANALYSIS ENGINES</span><Sparkles aria-hidden="true" /></div>
-          <div className="engine-grid">
-            <article className="engine-card">
-              <div className="engine-head"><CreditCard aria-hidden="true" /><div><p className="overline">FAIR CREDIT BILLING ACT</p><h2>Billing-error workspace</h2></div></div>
-              <StatementMock />
-              <ol className="engine-steps">
-                <li><strong>File</strong> each statement — instant receipt, Exhibit A, B, C…</li>
-                <li><strong>Read</strong> the figures (AI-assisted, always reviewable by you)</li>
-                <li><strong>Screen</strong> against FCBA-001 … FCBA-013 in auditable code</li>
-                <li><strong>Draft</strong> the §1666 notice and track the 30- and 90-day clocks</li>
-              </ol>
-            </article>
-            <article className="engine-card">
-              <div className="engine-head"><Car aria-hidden="true" /><div><p className="overline">SELF-HELP REPOSSESSION · FL & CA</p><h2>Repossession workspace</h2></div></div>
-              <ul className="repo-mock" aria-label="Example screening indicators">
-                <li className="critical"><span>REPO-003</span>Sale notice missing time, place, or date</li>
-                <li className="major"><span>REPO-002</span>Notice sender differs from secured party of record</li>
-                <li className="major"><span>REPO-007</span>Deficiency demanded without explanation</li>
-                <li className="ok"><span>9-623</span>Redemption window: 6 days remaining</li>
-              </ul>
-              <ol className="engine-steps">
-                <li><strong>Gather</strong> contract, notices, title, UCC-1, and SEC filings</li>
-                <li><strong>Answer</strong> a plain-language questionnaire (pre-fill from documents)</li>
-                <li><strong>Screen</strong> REPO-001 … REPO-008 with state-specific rules</li>
-                <li><strong>Draft</strong> the document demand, notice of demand, and special report</li>
-              </ol>
-            </article>
+        <section id="foundation" className="foundation-section" aria-labelledby="foundation-title">
+          <div className="foundation-head">
+            <p className="overline">CONSUMER ADVOCACY</p>
+            <h2 id="foundation-title">The Legal Foundation for Consumer Advocacy</h2>
+            <p>Three statutory purposes guide the portal: helping consumers understand credit, addressing inaccurate or unfair reporting, and organizing information concerning abusive debt-collection practices.</p>
           </div>
-          <div className="trust-row">
-            <span><Lock aria-hidden="true" />Files never get public links — every download re-checks your account</span>
-            <span><ShieldCheck aria-hidden="true" />Rules decide findings, not a chatbot — every mark cites its statute</span>
-            <span><Scale aria-hidden="true" />Every draft is prepared for attorney review, never sent automatically</span>
+          <div className="foundation-grid">
+            {FOUNDATION.map(({ icon: Icon, title, cite, text, message }) => (
+              <article key={cite} className="foundation-card">
+                <Icon aria-hidden="true" />
+                <p className="foundation-cite">{cite}</p>
+                <h3>{title}</h3>
+                <p>{text}</p>
+                <div className="core-message"><span>Core message</span><blockquote>{message}</blockquote></div>
+              </article>
+            ))}
           </div>
         </section>
 
@@ -135,6 +144,13 @@ export default function Home() {
           ].map(([q, a]) => <details key={q}><summary>{q}</summary><p>{a}</p></details>)}
         </section>
 
+        <section className="closing-statement" aria-labelledby="closing-title">
+          <h2 id="closing-title"><em>Your reputation deserves a clear path forward.</em></h2>
+          <p>Reputation Tenability brings documents, credit-report concerns, and debt-collection records into an organized workspace—helping consumers move from uncertainty to informed action.</p>
+          <p className="closing-motto">Informed choices. Accurate reports. Fair treatment.</p>
+          <p className="statute-disclaimer">These statutory summaries describe congressional findings and purposes. They are provided for general information and do not promise a particular legal outcome.</p>
+        </section>
+
         <section id="education" className="education-section">
           <div className="education-title"><BookOpen aria-hidden="true" /><h2>Start with the document in front of you.</h2></div>
           <div className="education-grid">
@@ -155,22 +171,3 @@ export default function Home() {
   );
 }
 
-function StatementMock() {
-  return (
-    <svg className="statement-mock" viewBox="0 0 360 210" role="img" aria-label="Example statement with a red triangle around the credit limit and brackets under line items">
-      <rect x="1" y="1" width="358" height="208" rx="3" className="paper" />
-      <text x="18" y="28" className="mock-title">ACCOUNT SUMMARY</text>
-      {[["Previous Balance", "$0.00", 54], ["Payments, Credits", "-$200.00", 78], ["Purchases", "+$910.80", 102], ["Credits", "$0.00", 126], ["New Balance", "$779.80", 150]].map(([label, value, y]) => (
-        <g key={label as string}><text x="18" y={y as number} className="mock-row">{label}</text><text x="170" y={y as number} className="mock-row" textAnchor="end">{value}</text></g>
-      ))}
-      <path d="M16 82 H174 M16 82 v-5 M174 82 v-5" className="mark-bracket" />
-      <path d="M16 130 H174 M16 130 v-5 M174 130 v-5" className="mark-bracket" />
-      <path d="M16 154 H174 M16 154 v-5 M174 154 v-5" className="mark-bracket" />
-      <text x="290" y="120" className="mock-row" textAnchor="middle">Credit Limit</text>
-      <text x="290" y="138" className="mock-strong" textAnchor="middle">$8,000</text>
-      <path d="M236 150 L344 150 L290 74 Z" className="mark-triangle" />
-      <circle cx="342" cy="22" r="9" className="mark-dot" /><text x="342" y="26" className="mock-dot" textAnchor="middle">1</text>
-      <text x="18" y="190" className="mock-note">FCBA-001 · 15 U.S.C. §1637(b)(2) · 12 C.F.R. §1026.8(b)</text>
-    </svg>
-  );
-}

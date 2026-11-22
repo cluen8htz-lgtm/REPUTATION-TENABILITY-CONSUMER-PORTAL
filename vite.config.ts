@@ -20,7 +20,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["reputation-tenability-logo.png", "icon-192.png", "icon-512.png"],
+      includeAssets: ["reputation-tenability-logo-600.webp", "icon-192.png", "icon-512.png"],
       manifest: {
         name: "Reputation Tenability Client Portal",
         short_name: "Reputation Tenability",
@@ -38,7 +38,7 @@ export default defineConfig({
       },
       workbox: {
         navigateFallbackDenylist: [/^\/api\//],
-        globPatterns: ["**/*.{js,css,html,png,svg,woff2}"],
+        globPatterns: ["**/*.{js,css,html,png,webp,svg,woff2}"],
         maximumFileSizeToCacheInBytes: 3_000_000,
       },
     }),
