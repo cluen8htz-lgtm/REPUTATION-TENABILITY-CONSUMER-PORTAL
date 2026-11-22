@@ -55,7 +55,7 @@ export default function Home() {
       <header className="public-header">
         <Link to="/" className="brand-lockup" aria-label="Reputation Tenability home">
           <img src="/reputation-tenability-logo-600.webp" alt="" />
-          <span><strong>REPUTATION TENABILITY</strong><small>FINANCED INTERVENTION AND RESTORATION</small></span>
+          <span><strong>REPUTATION TENABILITY</strong><small>FINANCIAL INTERVENTION AND RESTORATION</small></span>
         </Link>
         <nav className="public-nav" aria-label="Main navigation">
           <a href="#services">Services</a>
@@ -69,7 +69,7 @@ export default function Home() {
       <main>
         <section className="portal-hero">
           <div className="hero-copy">
-            <p className="overline">FINANCED INTERVENTION AND RESTORATION</p>
+            <p className="overline">FINANCIAL INTERVENTION AND RESTORATION</p>
             <h1>Informed Choices.<br />Accurate Reports.<br /><em>Fair Treatment.</em></h1>
             <p className="hero-tagline">Know your rights. Protect your credit. Restore your name.</p>
             <p className="hero-intro">A consumer-advocacy portal grounded in the purposes of <strong>15 U.S.C. §§ 1601, 1681, and 1692</strong>—meaningful disclosure of credit terms, fair and accurate credit reporting, and protection from abusive debt-collection practices.</p>
