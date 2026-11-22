@@ -46,7 +46,7 @@ export default function Login() {
   return (
     <div className="auth-shell">
       <aside className="auth-brand">
-        <Link to="/" className="brand-lockup"><img src="/reputation-tenability-logo.png" alt="" /><span><strong>REPUTATION TENABILITY</strong><small>CLIENT WORKSPACE</small></span></Link>
+        <Link to="/" className="brand-lockup"><img src="/reputation-tenability-logo-600.webp" alt="" /><span><strong>REPUTATION TENABILITY</strong><small>CLIENT WORKSPACE</small></span></Link>
         <blockquote>“{BRAND.tagline}”</blockquote>
         <ul><li>Statements filed as labeled exhibits</li><li>Every finding cites its statute</li><li>Drafts prepared for attorney review</li></ul>
       </aside>

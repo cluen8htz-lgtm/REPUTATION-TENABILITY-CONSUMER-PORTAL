@@ -37,7 +37,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
     <div className="workspace-shell">
       <aside className="workspace-sidebar">
         <NavLink to="/" className="workspace-brand">
-          <img src="/reputation-tenability-logo.png" alt="" />
+          <img src="/reputation-tenability-logo-600.webp" alt="" />
           <span>REPUTATION<br />TENABILITY</span>
         </NavLink>
         <button type="button" className="palette-hint" onClick={() => window.dispatchEvent(new Event("open-command-palette"))}><span>Search & jump</span><kbd>⌘K</kbd></button>
@@ -53,7 +53,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
       </aside>
 
       <header className="workspace-mobile-header">
-        <NavLink to="/portal" className="workspace-brand"><img src="/reputation-tenability-logo.png" alt="" /><span>REPUTATION TENABILITY</span></NavLink>
+        <NavLink to="/portal" className="workspace-brand"><img src="/reputation-tenability-logo-600.webp" alt="" /><span>REPUTATION TENABILITY</span></NavLink>
         <button type="button" onClick={() => setMenuOpen(true)} aria-label="Open navigation"><Menu /></button>
       </header>
 
