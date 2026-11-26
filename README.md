@@ -89,3 +89,6 @@ tests/               Unit tests + DB integration test
 - scrypt password hashing, rate-limited sign-in/registration, 30-day HttpOnly `SameSite=Lax` session cookie.
 - Strict security headers and CSP in production; uploads are type-sniffed from magic bytes and served with `nosniff` and a sandboxing CSP.
 - Run behind HTTPS. For multiple app instances, replace the in-memory rate limiter with a shared one.
+
+## Mobile scanner app
+The RT Scanner Android app lives in its own repository: [reputation-tenability-scanner](https://github.com/cluen8htz-lgtm/reputation-tenability-scanner). It signs in and files scans through `/api/mobile/*` (`api/mobile-route.ts`), into the same billing-error exhibit file the website uses.
