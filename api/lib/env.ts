@@ -38,6 +38,10 @@ export const env = {
     .filter(Boolean),
   allowRegistration: optional("ALLOW_REGISTRATION", "true") !== "false",
 
+  // Optional Google sign-in (OAuth 2.0 / OpenID Connect)
+  googleClientId: optional("GOOGLE_CLIENT_ID"),
+  googleClientSecret: optional("GOOGLE_CLIENT_SECRET"),
+
   // Optional Kimi OAuth (legacy platform login)
   kimiAuthUrl: oauthEndpoints.KIMI_AUTH_URL ?? optional("KIMI_AUTH_URL"),
   kimiOpenUrl: oauthEndpoints.KIMI_OPEN_URL ?? optional("KIMI_OPEN_URL"),
@@ -55,4 +59,5 @@ export const env = {
 };
 
 export const usingDevSecret = env.appSecret === DEV_SECRET;
+export const googleSignInEnabled = Boolean(env.googleClientId && env.googleClientSecret);
 export const kimiOAuthEnabled = Boolean(env.kimiAuthUrl && env.kimiOpenUrl);
