@@ -84,8 +84,42 @@ try {
   }
   assert.equal((await anon().auth.usernameAvailable({ username: "a" })).valid, false);
 
+  // Mobile scanner API: sign in, upload a scanned PDF, list exhibits, isolation
+  const { default: httpApp } = await import("../api/boot");
+  const { hashPassword } = await import("../api/lib/password");
+  const mobileEmail = `mobile-${stamp}@example.test`;
+  await db.insert(schema.users).values({ unionId: `local:${mobileEmail}`, name: "Mobile Client", username: `mob_${stamp % 100000}`, email: mobileEmail, passwordHash: await hashPassword("Mobile-Pass-77") });
+  const mobileUser = (await db.select().from(schema.users).where(eq(schema.users.email, mobileEmail)))[0];
+  created.push(mobileUser.id);
+  const bad = await httpApp.request("/api/mobile/login", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "10.9.9.9" }, body: JSON.stringify({ identifier: mobileEmail, password: "nope-nope-1" }) });
+  assert.equal(bad.status, 401);
+  const loginRes = await httpApp.request("/api/mobile/login", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "10.9.9.9" }, body: JSON.stringify({ identifier: `mob_${stamp % 100000}`, password: "Mobile-Pass-77" }) });
+  assert.equal(loginRes.status, 200);
+  const { token } = (await loginRes.json()) as { token: string };
+  const auth = { authorization: `Bearer ${token}` };
+  assert.equal((await httpApp.request("/api/mobile/fcba/exhibits")).status, 401);
+  const form = new FormData();
+  form.set("file", new File([await samplePdf()], "Scan-Aug.pdf", { type: "application/pdf" }));
+  form.set("category", "statements");
+  form.set("cycle", "07/15/25-08/05/25");
+  form.set("isFirstStatement", "true");
+  const mobileUp = await httpApp.request("/api/mobile/fcba/exhibits", { method: "POST", headers: auth, body: form });
+  assert.equal(mobileUp.status, 201);
+  const filed = (await mobileUp.json()) as { exhibitLabel: string; message: string };
+  assert.equal(filed.exhibitLabel, "Exhibit A");
+  const form2 = new FormData();
+  form2.set("file", new File([await samplePdf()], "Scan-Sep.pdf", { type: "application/pdf" }));
+  form2.set("category", "statements");
+  assert.equal(((await (await httpApp.request("/api/mobile/fcba/exhibits", { method: "POST", headers: auth, body: form2 })).json()) as { exhibitLabel: string }).exhibitLabel, "Exhibit B");
+  const list = (await (await httpApp.request("/api/mobile/fcba/exhibits", { headers: auth })).json()) as { exhibits: Array<{ exhibitLabel: string; folder: string }> };
+  assert.deepEqual(list.exhibits.map((e) => e.exhibitLabel), ["Exhibit B", "Exhibit A"]);
+  const otherLogin = await caller(other).fcba.listStatements();
+  assert.equal(otherLogin.length, 0);
+  const webView = await appRouter.createCaller({ req: new Request("http://localhost"), resHeaders: new Headers(), user: mobileUser }).fcba.listStatements();
+  assert.equal(webView.length, 2); // same exhibits appear in the website's billing-error page
+
   passed = true;
-  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft", "username sign-up + sign-in, Google account linking"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft", "username sign-up + sign-in, Google account linking", "mobile API: login, scan upload as Exhibit A/B, website sees them, isolation"] }, null, 2));
 } catch (error) {
   console.error("Integration test failed:", error);
 } finally {

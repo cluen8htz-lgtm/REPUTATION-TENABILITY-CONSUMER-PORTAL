@@ -13,6 +13,7 @@ import { handleClientLog } from "./lib/clientlog";
 import { REQUEST_ID_HEADER, runWithRequestId } from "./lib/requestcontext";
 import { registerFileRoutes } from "./files-route";
 import { registerGoogleRoutes } from "./auth/google";
+import { registerMobileRoutes } from "./mobile-route";
 import { usingDevSecret } from "./lib/env";
 
 const app = new Hono<{ Bindings: HttpBindings }>();
@@ -94,6 +95,7 @@ app.get(Paths.oauthCallback, createOAuthCallbackHandler());
 app.get("/api/health", (c) => c.json({ ok: true, ts: Date.now() }));
 registerFileRoutes(app);
 registerGoogleRoutes(app);
+registerMobileRoutes(app);
 app.use("/api/trpc/*", async (c) => {
   return fetchRequestHandler({
     endpoint: "/api/trpc",

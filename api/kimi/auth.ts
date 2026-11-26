@@ -56,8 +56,10 @@ async function verifyAccessToken(
 }
 
 export async function authenticateRequest(headers: Headers) {
+  // Browsers send the session cookie; the mobile app sends the same signed token as a Bearer header.
+  const bearer = headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
   const cookies = cookie.parse(headers.get("cookie") || "");
-  const token = cookies[Session.cookieName];
+  const token = bearer ?? cookies[Session.cookieName];
   if (!token) {
     throw Errors.forbidden("Invalid authentication token.");
   }
