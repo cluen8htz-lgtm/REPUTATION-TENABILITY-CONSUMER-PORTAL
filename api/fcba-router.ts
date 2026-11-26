@@ -118,6 +118,72 @@ async function applyFacts(userId: number, stmtId: number, facts: StatementFacts,
   return { hits, complianceScore: score, located };
 }
 
+export type ExhibitUpload = {
+  name: string;
+  bytes: Uint8Array;
+  contentType?: string;
+  category: string;
+  cycle?: string;
+  isFirstStatement: boolean;
+};
+
+/** File one exhibit: sniff type, store privately, assign the next exhibit label, log the receipt. */
+export async function fileFcbaExhibit(userId: number, input: ExhibitUpload) {
+  const db = getDb();
+  const cat = EXHIBIT_CATEGORIES.find((c) => c.value === input.category);
+  if (!cat) throw new TRPCError({ code: "BAD_REQUEST", message: "Unknown exhibit category." });
+  const contentType = sniffContentType(input.bytes, input.contentType);
+  const existing = await db.select({ id: fcbaStatements.id }).from(fcbaStatements).where(eq(fcbaStatements.userId, userId));
+  const label = exhibitLabel(existing.length);
+  const saved = await blob().put(makeKey(`fcba/${userId}`, input.name), input.bytes, contentType);
+  const [{ id }] = await db.insert(fcbaStatements).values({
+    userId,
+    fileKey: saved.key,
+    fileName: input.name,
+    exhibitLabel: label,
+    category: cat.value,
+    folder: cat.folder,
+    cycle: input.cycle || null,
+    isFirstStatement: input.isFirstStatement,
+    contentType,
+    size: saved.size,
+    analysisStatus: "pending",
+  }).$returningId();
+  await db.insert(fcbaEvents).values({ userId, statementId: id, type: "uploaded", message: `${label} received and filed in "${cat.folder}".` });
+  return {
+    id,
+    exhibitLabel: label,
+    folder: cat.folder,
+    analyzable: cat.value === "statements" || cat.value === "credit_reports",
+    message: `Receipt confirmed. ${input.name} is filed as ${label} under ${cat.folder}.`,
+  };
+}
+
+/** AI extraction → deterministic engine → annotated PDF. Shared by the web portal and the mobile app. */
+export async function analyzeFcbaExhibit(userId: number, statementId: number) {
+  const db = getDb();
+  const stmt = await ownStatement(userId, statementId);
+  await db.update(fcbaStatements).set({ analysisStatus: "analyzing", analysisError: null }).where(eq(fcbaStatements.id, stmt.id));
+  try {
+    const bytes = await blob().get(stmt.fileKey);
+    const extracted = await extractStructured({
+      schema: StatementFactsSchema,
+      system: EXTRACT_SYSTEM,
+      prompt: `Extract the facts from ${stmt.exhibitLabel} (${stmt.fileName}${stmt.cycle ? `, billing cycle ${stmt.cycle}` : ""}). The client ${stmt.isFirstStatement ? "states this is the FIRST periodic statement on the account; if a credit limit is shown and no origination credit is posted, set originationCreditClaimed to the credit limit" : "has not marked this as the first statement"}. Leave documentsRequested and creditorProducedDocuments false unless the document itself shows them.`,
+      attachments: [{ bytes, contentType: stmt.contentType ?? "application/pdf", title: stmt.fileName }],
+    });
+    const facts: StatementFacts = { ...extracted, isFirstStatement: extracted.isFirstStatement || stmt.isFirstStatement };
+    return { ...(await applyFacts(userId, stmt.id, facts, "ai")), facts, source: "ai" as const };
+  } catch (error) {
+    const message = error instanceof AiUnavailable
+      ? `${error.message} You can still enter the statement figures yourself and run the rule engine.`
+      : "Analysis failed. You can enter the statement figures yourself and run the rule engine.";
+    if (!(error instanceof AiUnavailable)) log.error("fcba analysis failed", { error: error instanceof Error ? error.message : String(error) });
+    await db.update(fcbaStatements).set({ analysisStatus: "failed", analysisError: message.slice(0, 500) }).where(eq(fcbaStatements.id, stmt.id));
+    return { hits: [], complianceScore: null, located: {}, facts: null, source: null, error: message };
+  }
+}
+
 export const fcbaRouter = createRouter({
   uploadStatement: authedQuery
     .input(z.object({
@@ -129,67 +195,19 @@ export const fcbaRouter = createRouter({
       isFirstStatement: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
-      const db = getDb();
       let bytes: Uint8Array;
       try {
         bytes = decodeUpload(input.contentBase64);
       } catch (error) {
         throw new TRPCError({ code: "PAYLOAD_TOO_LARGE", message: (error as Error).message });
       }
-      const contentType = sniffContentType(bytes, input.contentType);
-      const cat = EXHIBIT_CATEGORIES.find((c) => c.value === input.category)!;
-      const existing = await db.select({ id: fcbaStatements.id }).from(fcbaStatements).where(eq(fcbaStatements.userId, ctx.user.id));
-      const label = exhibitLabel(existing.length);
-      const saved = await blob().put(makeKey(`fcba/${ctx.user.id}`, input.name), bytes, contentType);
-      const [{ id }] = await db.insert(fcbaStatements).values({
-        userId: ctx.user.id,
-        fileKey: saved.key,
-        fileName: input.name,
-        exhibitLabel: label,
-        category: cat.value,
-        folder: cat.folder,
-        cycle: input.cycle || null,
-        isFirstStatement: input.isFirstStatement,
-        contentType,
-        size: saved.size,
-        analysisStatus: "pending",
-      }).$returningId();
-      await db.insert(fcbaEvents).values({ userId: ctx.user.id, statementId: id, type: "uploaded", message: `${label} received and filed in "${cat.folder}".` });
-      return {
-        id,
-        exhibitLabel: label,
-        folder: cat.folder,
-        analyzable: cat.value === "statements" || cat.value === "credit_reports",
-        message: `Receipt confirmed. ${input.name} is filed as ${label} under ${cat.folder}.`,
-      };
+      return fileFcbaExhibit(ctx.user.id, { name: input.name, bytes, contentType: input.contentType, category: input.category, cycle: input.cycle, isFirstStatement: input.isFirstStatement });
     }),
 
   /** AI extraction → deterministic engine → annotated PDF. */
   analyzeStatement: authedQuery
     .input(z.object({ id: z.number().int().positive() }))
-    .mutation(async ({ ctx, input }) => {
-      const db = getDb();
-      const stmt = await ownStatement(ctx.user.id, input.id);
-      await db.update(fcbaStatements).set({ analysisStatus: "analyzing", analysisError: null }).where(eq(fcbaStatements.id, stmt.id));
-      try {
-        const bytes = await blob().get(stmt.fileKey);
-        const extracted = await extractStructured({
-          schema: StatementFactsSchema,
-          system: EXTRACT_SYSTEM,
-          prompt: `Extract the facts from ${stmt.exhibitLabel} (${stmt.fileName}${stmt.cycle ? `, billing cycle ${stmt.cycle}` : ""}). The client ${stmt.isFirstStatement ? "states this is the FIRST periodic statement on the account; if a credit limit is shown and no origination credit is posted, set originationCreditClaimed to the credit limit" : "has not marked this as the first statement"}. Leave documentsRequested and creditorProducedDocuments false unless the document itself shows them.`,
-          attachments: [{ bytes, contentType: stmt.contentType ?? "application/pdf", title: stmt.fileName }],
-        });
-        const facts: StatementFacts = { ...extracted, isFirstStatement: extracted.isFirstStatement || stmt.isFirstStatement };
-        return { ...(await applyFacts(ctx.user.id, stmt.id, facts, "ai")), facts, source: "ai" as const };
-      } catch (error) {
-        const message = error instanceof AiUnavailable
-          ? `${error.message} You can still enter the statement figures yourself and run the rule engine.`
-          : "Analysis failed. You can enter the statement figures yourself and run the rule engine.";
-        if (!(error instanceof AiUnavailable)) log.error("fcba analysis failed", { error: error instanceof Error ? error.message : String(error) });
-        await db.update(fcbaStatements).set({ analysisStatus: "failed", analysisError: message.slice(0, 500) }).where(eq(fcbaStatements.id, stmt.id));
-        return { hits: [], complianceScore: null, located: {}, facts: null, source: null, error: message };
-      }
-    }),
+    .mutation(({ ctx, input }) => analyzeFcbaExhibit(ctx.user.id, input.id)),
 
   /** Human-in-the-loop: accept edited facts and re-run the engine (no AI needed). */
   saveFacts: authedQuery
