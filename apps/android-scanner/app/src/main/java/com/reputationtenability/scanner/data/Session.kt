@@ -3,14 +3,15 @@ package com.reputationtenability.scanner.data
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
+import androidx.security.crypto.MasterKeys
 
 /** Stores the portal sign-in token encrypted with a hardware-backed key. */
 class Session(context: Context) {
+    // security-crypto 1.0.0 (stable) API: an AES-256-GCM key in the Android Keystore.
     private val prefs: SharedPreferences = EncryptedSharedPreferences.create(
-        context,
         "rt_session",
-        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
+        context,
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
