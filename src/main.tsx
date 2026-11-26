@@ -6,6 +6,7 @@ import "@fontsource/cormorant-garamond/500.css";
 import "@fontsource/cormorant-garamond/500-italic.css";
 import "./index.css";
 import "./styles/modules.css";
+import "./styles/solid.css";
 import { TRPCProvider } from "@/providers/trpc";
 import App from "./App";
 
