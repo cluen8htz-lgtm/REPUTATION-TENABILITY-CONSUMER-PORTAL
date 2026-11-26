@@ -1,7 +1,8 @@
-import { ArrowRight, BookOpen, FileSearch, FileStack, Landmark, Scale, ShieldCheck, Smartphone, Upload } from "lucide-react";
+import { ArrowRight, BookOpen, FileSearch, FileStack, Landmark, Scale, MessageCircle, ShieldCheck, Smartphone, Upload } from "lucide-react";
 import { Link } from "react-router";
 import { useState } from "react";
 import { BRAND, SERVICE_AREAS } from "@contracts/portal";
+import HeroBackdrop from "@/components/HeroBackdrop";
 
 const services = [
   { title: "Debt-collection case organization", text: "Keep the complaint, service papers, pleadings, court dates, and case notes together." },
@@ -68,6 +69,7 @@ export default function Home() {
 
       <main>
         <section className="portal-hero">
+          <HeroBackdrop />
           <div className="hero-copy">
             <p className="overline">FINANCIAL INTERVENTION AND RESTORATION</p>
             <h1>Informed Choices.<br />Accurate Reports.<br /><em>Fair Treatment.</em></h1>
@@ -161,6 +163,8 @@ export default function Home() {
           <button type="button" className="share-button" onClick={sharePage}>{shared ? "Link copied" : "Share this educational page"}<ArrowRight /></button>
         </section>
       </main>
+
+      <a className="float-contact" href={`mailto:${BRAND.email}`} aria-label="Contact Reputation Tenability"><MessageCircle aria-hidden="true" /></a>
 
       <footer className="public-footer">
         <div><strong>{BRAND.name}</strong><p>Credit repair · Financial consultancy · Consumer education</p></div>
