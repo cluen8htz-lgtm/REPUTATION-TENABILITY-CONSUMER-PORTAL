@@ -28,6 +28,18 @@ any pending database migrations automatically (`RUN_MIGRATIONS=false` turns this
 7. Invite clients from **Staff review → Clients → Create account**. Each gets a one-time temporary
    password to share by phone or in person; they change it under **Account**.
 
+## Google sign-in (optional)
+
+1. In Google Cloud Console, open **APIs & Services → OAuth consent screen**. Choose **External**,
+   then add the app name, support email, your logo and domain, and publish the app.
+2. **Credentials → Create credentials → OAuth client ID → Web application**.
+   - Authorized JavaScript origin: `https://<your domain>`
+   - Authorized redirect URI: `https://<your domain>/api/oauth/google/callback`
+3. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` on the app service, along with `PUBLIC_URL`
+   set to the same domain. Redeploy; "Continue with Google" then appears on the sign-in and sign-up pages.
+
+A Google sign-in with the same verified email as an existing account signs into that account.
+
 ## Option B — your own Linux server (VPS)
 
 Requires Docker and a DNS record pointing your domain at the server.

@@ -2,6 +2,7 @@ import { Outlet, Route, Routes } from "react-router";
 import AuthLayout from "@/components/AuthLayout";
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
+import Signup from "@/pages/Signup";
 import NotFound from "@/pages/NotFound";
 import DashboardPage from "@/pages/DashboardPage";
 import IntakePage from "@/pages/IntakePage";
@@ -22,6 +23,7 @@ export default function App() {
   return <Routes>
     <Route path="/" element={<Home />} />
     <Route path="/login" element={<Login />} />
+    <Route path="/signup" element={<Signup />} />
     <Route path="/portal" element={<PortalLayout />}>
       <Route index element={<DashboardPage />} />
       <Route path="intake" element={<IntakePage />} />

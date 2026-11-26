@@ -64,7 +64,10 @@ export default function Home() {
           <a href="#areas">Service areas</a>
           <a href="#education">Education</a>
         </nav>
-        <Link to="/login" className="text-link">Client sign in <ArrowRight aria-hidden="true" /></Link>
+        <div className="header-actions">
+          <Link to="/login" className="text-link">Client sign in <ArrowRight aria-hidden="true" /></Link>
+          <Link to="/signup" className="signup-pill">Sign up</Link>
+        </div>
       </header>
 
       <main>

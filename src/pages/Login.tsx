@@ -3,6 +3,8 @@ import { ArrowRight, Lock } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { BRAND } from "@contracts/portal";
+import { GoogleButton } from "@/components/GoogleButton";
+import { AUTH_ERRORS } from "@/lib/auth-errors";
 
 function kimiOAuthUrl() {
   const kimiAuthUrl = import.meta.env.VITE_KIMI_AUTH_URL;
@@ -26,8 +28,8 @@ export default function Login() {
   const [params] = useSearchParams();
   const setup = params.has("setup");
   const [mode, setMode] = useState<"signin" | "register">(setup ? "register" : "signin");
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
-  const [error, setError] = useState("");
+  const [form, setForm] = useState({ name: "", username: "", identifier: "", email: "", password: "" });
+  const [error, setError] = useState(AUTH_ERRORS[params.get("error") ?? ""] ?? "");
   const onDone = async () => { await utils.auth.me.invalidate(); navigate("/portal"); };
   const login = trpc.auth.login.useMutation({ onSuccess: onDone, onError: (e) => setError(e.message) });
   const register = trpc.auth.register.useMutation({ onSuccess: onDone, onError: (e) => setError(e.message) });
@@ -39,8 +41,8 @@ export default function Login() {
   function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
-    if (mode === "signin") login.mutate({ email: form.email, password: form.password });
-    else register.mutate(form);
+    if (mode === "signin") login.mutate({ identifier: form.identifier, password: form.password });
+    else register.mutate({ name: form.name, username: form.username, email: form.email, password: form.password });
   }
 
   return (
@@ -54,13 +56,18 @@ export default function Login() {
         <form onSubmit={submit} className="auth-form" aria-labelledby="auth-title">
           <p className="overline"><Lock aria-hidden="true" />SECURE ACCESS</p>
           <h1 id="auth-title">{mode === "signin" ? "Welcome back." : "Create your workspace."}</h1>
+          {mode === "signin" && config.data?.google && <><GoogleButton intent="signin" /><div className="divider"><span>or</span></div></>}
           {mode === "register" && <label>Full name<input autoComplete="name" required minLength={2} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>}
-          <label>Email<input type="email" autoComplete="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+          {mode === "register" && <label>Username<input autoComplete="username" required minLength={3} maxLength={30} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value.trim().toLowerCase() })} /></label>}
+          {mode === "signin"
+            ? <label>Username or email<input autoComplete="username" required value={form.identifier} onChange={(e) => setForm({ ...form, identifier: e.target.value })} /></label>
+            : <label>Email<input type="email" autoComplete="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>}
           <label>Password<input type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} required minLength={mode === "register" ? 10 : 1} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
           {mode === "register" && <small className="hint">At least 10 characters, mixing three of: lowercase, uppercase, numbers, symbols.</small>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="gold-button wide" disabled={busy}>{busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}<ArrowRight /></button>
-          {(config.data?.registration === true || setup) && <button type="button" className="text-switch" onClick={() => { setMode(mode === "signin" ? "register" : "signin"); setError(""); }}>{mode === "signin" ? "New client? Create an account" : "Already have an account? Sign in"}</button>}
+          {mode === "signin" && config.data?.registration === true && <p className="switch-line">New client? <Link to="/signup">Create an account</Link></p>}
+          {setup && <button type="button" className="text-switch" onClick={() => { setMode(mode === "signin" ? "register" : "signin"); setError(""); }}>{mode === "signin" ? "First-time staff setup" : "Already have an account? Sign in"}</button>}
           {config.data?.registration === false && !setup && <p className="hint">New clients receive their sign-in details from Reputation Tenability staff.</p>}
           {oauth && <><div className="divider"><span>or</span></div><a className="outline-button wide" href={oauth}>Continue with Kimi</a></>}
           <p className="legal-note">By continuing you agree that the workspace provides education and organization, not legal advice.</p>

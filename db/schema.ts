@@ -14,6 +14,7 @@ export const users = mysqlTable("users", {
   id: serial("id").primaryKey(),
   unionId: varchar("unionId", { length: 255 }).notNull().unique(),
   name: varchar("name", { length: 255 }),
+  username: varchar("username", { length: 40 }).unique(),
   email: varchar("email", { length: 320 }),
   avatar: text("avatar"),
   passwordHash: varchar("passwordHash", { length: 255 }),

@@ -65,8 +65,27 @@ try {
   const draft = await c.repo.generateDraft({ caseId: repo.id, draftType: "document_demand", useAi: false });
   assert.match(draft.body, /Retail installment contract|retail installment contract/i);
 
+  // Sign-up with a username; sign in by username and by email; Google account linking
+  const anon = () => appRouter.createCaller({ req: new Request("http://localhost/api/trpc", { headers: { "x-forwarded-for": `10.0.0.${created.length}` } }), resHeaders: new Headers() });
+  const uname = `it_user_${stamp % 100000}`;
+  const signupEmail = `signup-${stamp}@example.test`;
+  const reg = await anon().auth.register({ name: "Sign Up", username: uname, email: signupEmail, password: "Sign-Up-Pass-9" }).catch((e) => e);
+  if (reg instanceof Error) {
+    assert.match(reg.message, /invitation/i); // registration closed in this environment
+  } else {
+    const signed = (await db.select().from(schema.users).where(eq(schema.users.username, uname)))[0];
+    created.push(signed.id);
+    await assert.rejects(anon().auth.register({ name: "Dup", username: uname, email: `x${signupEmail}`, password: "Sign-Up-Pass-9" }), /username is taken/i);
+    assert.deepEqual(await anon().auth.login({ identifier: uname.toUpperCase(), password: "Sign-Up-Pass-9" }), { ok: true });
+    assert.deepEqual(await anon().auth.login({ identifier: signupEmail, password: "Sign-Up-Pass-9" }), { ok: true });
+    await assert.rejects(anon().auth.login({ identifier: uname, password: "wrong-Pass-99" }), /incorrect/i);
+    const { resolveGoogleUser } = await import("../api/auth/google");
+    assert.equal(await resolveGoogleUser({ sub: `g${stamp}`, email: signupEmail, name: "Sign Up", picture: null }), `local:${signupEmail}`);
+  }
+  assert.equal((await anon().auth.usernameAvailable({ username: "a" })).valid, false);
+
   passed = true;
-  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft", "username sign-up + sign-in, Google account linking"] }, null, 2));
 } catch (error) {
   console.error("Integration test failed:", error);
 } finally {

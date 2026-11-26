@@ -6,10 +6,10 @@ import { Session } from "@contracts/constants";
 import { users } from "@db/schema";
 import { getSessionCookieOptions } from "./lib/cookies";
 import { createRouter, adminQuery, authedQuery, publicQuery } from "./middleware";
-import { env, kimiOAuthEnabled } from "./lib/env";
+import { env, googleSignInEnabled, kimiOAuthEnabled } from "./lib/env";
+import { sessionSetCookie } from "./auth/session-cookie";
 import { generateTemporaryPassword, hashPassword, passwordProblem, verifyPassword } from "./lib/password";
 import { clientIp, rateLimit } from "./lib/ratelimit";
-import { signSessionToken } from "./kimi/session";
 import { getDb } from "./queries/connection";
 import { findUserByUnionId } from "./queries/users";
 import { aiConfigured } from "./ai/llm";
@@ -17,18 +17,18 @@ import { aiConfigured } from "./ai/llm";
 const email = z.string().trim().toLowerCase().email().max(320);
 
 async function issueSession(headers: Headers, resHeaders: Headers, unionId: string) {
-  const token = await signSessionToken({ unionId, clientId: env.appId });
-  const opts = getSessionCookieOptions(headers);
-  resHeaders.append(
-    "set-cookie",
-    cookie.serialize(Session.cookieName, token, {
-      httpOnly: true,
-      path: "/",
-      sameSite: opts.sameSite?.toLowerCase() as "lax" | "none",
-      secure: opts.secure,
-      maxAge: Session.maxAgeMs / 1000,
-    }),
-  );
+  resHeaders.append("set-cookie", await sessionSetCookie(headers, unionId));
+}
+
+export const USERNAME_RE = /^[a-z0-9](?:[a-z0-9._]{1,28}[a-z0-9])$/;
+const username = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(USERNAME_RE, "Usernames are 3–30 characters: letters, numbers, dots or underscores, starting and ending with a letter or number.");
+
+async function findByUsername(name: string) {
+  return (await getDb().select().from(users).where(eq(users.username, name)).limit(1))[0];
 }
 
 function throttle(headers: Headers, bucket: string) {
@@ -51,11 +51,12 @@ export const authRouter = createRouter({
   config: publicQuery.query(() => ({
     registration: env.allowRegistration,
     kimiOAuth: kimiOAuthEnabled,
+    google: googleSignInEnabled,
     ai: aiConfigured(),
   })),
 
   register: publicQuery
-    .input(z.object({ name: z.string().trim().min(2).max(120), email, password: z.string().max(200) }))
+    .input(z.object({ name: z.string().trim().min(2).max(120), username, email, password: z.string().max(200) }))
     .mutation(async ({ ctx, input }) => {
       // Invitation-only portals still let the configured owner emails create the first staff accounts.
       if (!env.allowRegistration && !env.ownerEmails.includes(input.email)) {
@@ -68,10 +69,14 @@ export const authRouter = createRouter({
       if (await findUserByUnionId(unionId)) {
         throw new TRPCError({ code: "CONFLICT", message: "An account with that email already exists. Sign in instead." });
       }
+      if (await findByUsername(input.username)) {
+        throw new TRPCError({ code: "CONFLICT", message: "That username is taken. Try another." });
+      }
       const role = env.ownerEmails.includes(input.email) ? "admin" : "user";
       await getDb().insert(users).values({
         unionId,
         name: input.name,
+        username: input.username,
         email: input.email,
         passwordHash: await hashPassword(input.password),
         role,
@@ -82,17 +87,35 @@ export const authRouter = createRouter({
     }),
 
   login: publicQuery
-    .input(z.object({ email, password: z.string().max(200) }))
+    .input(z.object({ identifier: z.string().trim().toLowerCase().min(1).max(320), password: z.string().max(200) }))
     .mutation(async ({ ctx, input }) => {
       throttle(ctx.req.headers, "login");
-      const unionId = `local:${input.email}`;
-      const user = await findUserByUnionId(unionId);
+      const user = input.identifier.includes("@")
+        ? await findUserByUnionId(`local:${input.identifier}`)
+        : await findByUsername(input.identifier);
       // Always run a hash comparison so response timing doesn't reveal accounts.
       const valid = await verifyPassword(input.password, user?.passwordHash ?? "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-      if (!user || !valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Email or password is incorrect." });
-      const promote = env.ownerEmails.includes(input.email) && user.role !== "admin";
+      if (!user || !valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Username/email or password is incorrect." });
+      const promote = Boolean(user.email && env.ownerEmails.includes(user.email)) && user.role !== "admin";
       await getDb().update(users).set({ lastSignInAt: new Date(), ...(promote ? { role: "admin" as const } : {}) }).where(eq(users.id, user.id));
-      await issueSession(ctx.req.headers, ctx.resHeaders, unionId);
+      await issueSession(ctx.req.headers, ctx.resHeaders, user.unionId);
+      return { ok: true };
+    }),
+
+  usernameAvailable: publicQuery
+    .input(z.object({ username: z.string().trim().toLowerCase().max(40) }))
+    .query(async ({ input }) => {
+      if (!USERNAME_RE.test(input.username)) return { available: false, valid: false };
+      return { available: !(await findByUsername(input.username)), valid: true };
+    }),
+
+  /** Let accounts created before usernames existed (or via Google) pick one. */
+  setUsername: authedQuery
+    .input(z.object({ username }))
+    .mutation(async ({ ctx, input }) => {
+      const taken = await findByUsername(input.username);
+      if (taken && taken.id !== ctx.user.id) throw new TRPCError({ code: "CONFLICT", message: "That username is taken. Try another." });
+      await getDb().update(users).set({ username: input.username }).where(eq(users.id, ctx.user.id));
       return { ok: true };
     }),
 
