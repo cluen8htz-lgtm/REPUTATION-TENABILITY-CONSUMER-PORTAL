@@ -9,6 +9,11 @@
  *   POST /api/mobile/fcba/exhibits    multipart: file, category, cycle?, isFirstStatement?
  *                                     → files the scan as the next exhibit (A, B, C…)
  *   GET  /api/mobile/fcba/exhibits    → the client's exhibits, newest first
+ *   GET  /api/mobile/calls            → the client's collection-call log, newest first
+ *   POST /api/mobile/calls            {collectorName, phoneNumber?, calledAt, direction, summary, notes?, consentAcknowledged: true}
+ *   PATCH  /api/mobile/calls/:id      edit name / number / date & time / summary / notes
+ *   DELETE /api/mobile/calls/:id
+ *                                     Same records as the website's Call log page. Notes only, never audio.
  *
  * Auth: "Authorization: Bearer <token>". The token is the same signed session
  * token the website uses in its cookie, so every portal ownership check applies.
@@ -17,9 +22,9 @@ import type { Context, Hono } from "hono";
 import type { HttpBindings } from "@hono/node-server";
 import { bodyLimit } from "hono/body-limit";
 import { TRPCError } from "@trpc/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { fcbaStatements, users } from "@db/schema";
+import { callLogs, fcbaStatements, users } from "@db/schema";
 import type { User } from "@db/schema";
 import { EXHIBIT_CATEGORIES } from "@contracts/fcba";
 import { env } from "./lib/env";
@@ -51,6 +56,19 @@ async function requireUser(c: Context): Promise<User | Response> {
 }
 
 const LoginBody = z.object({ identifier: z.string().trim().toLowerCase().min(1).max(320), password: z.string().min(1).max(200) });
+
+const CalledAt = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Use YYYY-MM-DDTHH:mm");
+const CallFields = {
+  collectorName: z.string().trim().min(2).max(255),
+  phoneNumber: z.string().trim().max(40).nullish(),
+  calledAt: CalledAt,
+  direction: z.enum(["incoming", "outgoing"]),
+  summary: z.string().trim().min(3).max(4000),
+  notes: z.string().trim().max(4000).nullish(),
+};
+const CallCreate = z.object({ ...CallFields, consentAcknowledged: z.literal(true) });
+const CallPatch = z.object(CallFields).partial().refine((v) => Object.keys(v).length > 0, "Nothing to update.");
+const callError = (error: z.ZodError) => error.issues[0]?.message ?? "Check the call details.";
 
 const ExchangeBody = z.object({ code: z.string().min(20).max(2000), verifier: z.string().min(43).max(128) });
 
@@ -146,4 +164,50 @@ export function registerMobileRoutes(app: App) {
       }
     },
   );
+
+  app.get("/api/mobile/calls", async (c) => {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
+    const calls = await getDb().select().from(callLogs).where(eq(callLogs.userId, user.id)).orderBy(desc(callLogs.calledAt), desc(callLogs.id));
+    return c.json({ calls });
+  });
+
+  app.post("/api/mobile/calls", async (c) => {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
+    const parsed = CallCreate.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: callError(parsed.error) }, 400);
+    const [{ id }] = await getDb().insert(callLogs).values({ userId: user.id, ...parsed.data, phoneNumber: parsed.data.phoneNumber || null, notes: parsed.data.notes || null }).$returningId();
+    const [call] = await getDb().select().from(callLogs).where(eq(callLogs.id, id));
+    return c.json({ call }, 201);
+  });
+
+  app.patch("/api/mobile/calls/:id", async (c) => {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
+    const id = Number(c.req.param("id"));
+    if (!Number.isInteger(id) || id <= 0) return c.json({ error: "Call not found." }, 404);
+    const parsed = CallPatch.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: callError(parsed.error) }, 400);
+    const own = and(eq(callLogs.id, id), eq(callLogs.userId, user.id));
+    const [existing] = await getDb().select({ id: callLogs.id }).from(callLogs).where(own);
+    if (!existing) return c.json({ error: "Call not found." }, 404);
+    const patch = { ...parsed.data };
+    if ("phoneNumber" in patch) patch.phoneNumber = patch.phoneNumber || null;
+    if ("notes" in patch) patch.notes = patch.notes || null;
+    await getDb().update(callLogs).set(patch).where(own);
+    const [call] = await getDb().select().from(callLogs).where(own);
+    return c.json({ call });
+  });
+
+  app.delete("/api/mobile/calls/:id", async (c) => {
+    const user = await requireUser(c);
+    if (user instanceof Response) return user;
+    const id = Number(c.req.param("id"));
+    const own = and(eq(callLogs.id, id), eq(callLogs.userId, user.id));
+    const [existing] = Number.isInteger(id) ? await getDb().select({ id: callLogs.id }).from(callLogs).where(own) : [];
+    if (!existing) return c.json({ error: "Call not found." }, 404);
+    await getDb().delete(callLogs).where(own);
+    return c.json({ ok: true });
+  });
 }
