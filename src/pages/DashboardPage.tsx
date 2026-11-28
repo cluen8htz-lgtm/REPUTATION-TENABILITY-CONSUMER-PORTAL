@@ -1,3 +1,4 @@
+import { AppDownloadCard } from "@/components/AppDownloadCard";
 import { ArrowRight, CalendarDays, CalendarPlus, Car, CloudOff, FileCheck2, FolderUp, PhoneCall, TriangleAlert } from "lucide-react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router";
@@ -50,6 +51,8 @@ export default function DashboardPage() {
       <Link to="/portal/billing-error"><TriangleAlert /><span><strong>Billing error</strong><small>{data?.fcba.exhibits ?? 0} exhibit(s) · {data?.fcba.findings ?? 0} finding(s){data?.fcba.critical ? ` · ${data.fcba.critical} critical` : ""} · {data?.fcba.disputes ?? 0} dispute(s)</small></span><ArrowRight /></Link>
       <Link to="/portal/repossession"><Car /><span><strong>Repossession</strong><small>{data?.repo.cases ?? 0} case(s){data?.repo.cases ? ` · highest issue score ${data.repo.maxRisk}/100` : ""}</small></span><ArrowRight /></Link>
     </section>
+
+    <AppDownloadCard />
 
     <section className="quick-actions">
       <Link to="/portal/documents"><FileCheck2 /><span><strong>Build your file</strong><small>Statements, reports, mail, and court papers</small></span><ArrowRight /></Link>

@@ -6,9 +6,11 @@
  * ZIP exhibit bundle and calendar feed.
  */
 import { useMemo, useState } from "react";
-import { CalendarPlus, Download, FileText, Gavel, Play, RefreshCw, Save, Send, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
+import { CalendarPlus, Camera, Download, FileCheck2, FileText, Gavel, Play, RefreshCw, Save, Send, Sparkles, Trash2, TriangleAlert, Upload } from "lucide-react";
 import { trpc } from "@/providers/trpc";
 import { EmptyState, LoadingPanel, PageTitle } from "@/components/PortalComponents";
+import { CameraScan } from "@/components/CameraScan";
+import { AppDownloadCard } from "@/components/AppDownloadCard";
 import { DeadlineChip, FileDrop, MarkIcon, Notice, ScoreGauge, SeverityBadge, Steps, Tabs } from "@/components/ModuleKit";
 import { fileToBase64, todayIso } from "@/lib/files";
 import { EXHIBIT_CATEGORIES, FCBA_RULES } from "@contracts/fcba";
@@ -57,6 +59,7 @@ export default function FcbaPage() {
         await refresh();
         if (id && analyzable && config.data?.ai) setReviewId(null);
       }} aiEnabled={Boolean(config.data?.ai)} onError={(text) => setNotice({ tone: "warn", text })} />
+      <AppDownloadCard compact />
       {stmts.length === 0 ? <EmptyState title="No exhibits yet" text="Start with the first periodic statement after the account opened, then add each later statement in order." /> :
         <div className="exhibit-table" role="table" aria-label="Exhibits">
           {stmts.map((s) => <ExhibitRow key={s.id} stmt={s} findings={hits.filter((h) => h.statementId === s.id).length} aiEnabled={Boolean(config.data?.ai)} onReview={() => setReviewId(s.id)} onChanged={refresh} onNotice={setNotice} />)}
@@ -78,6 +81,8 @@ export default function FcbaPage() {
 
 function UploadPanel({ onDone, onError, aiEnabled }: { onDone: (message: string, id?: number, analyzable?: boolean) => void; onError: (text: string) => void; aiEnabled: boolean }) {
   const [file, setFile] = useState<File | null>(null);
+  const [mode, setMode] = useState<"scan" | "file">("scan");
+  const [scanned, setScanned] = useState<number | null>(null);
   const [category, setCategory] = useState("statements");
   const [cycle, setCycle] = useState("");
   const [isFirst, setIsFirst] = useState(false);
@@ -87,7 +92,7 @@ function UploadPanel({ onDone, onError, aiEnabled }: { onDone: (message: string,
   const submit = async () => {
     if (!file) return;
     const result = await upload.mutateAsync({ name: file.name, contentBase64: await fileToBase64(file), contentType: file.type || undefined, category: category as "statements", cycle: cycle || undefined, isFirstStatement: isFirst });
-    setFile(null); setCycle(""); setIsFirst(false);
+    setFile(null); setScanned(null); setCycle(""); setIsFirst(false);
     onDone(result.message + (result.analyzable && aiEnabled ? " Reading the statement now…" : ""), result.id, result.analyzable);
     if (result.analyzable && aiEnabled) {
       const analysis = await analyze.mutateAsync({ id: result.id });
@@ -95,7 +100,15 @@ function UploadPanel({ onDone, onError, aiEnabled }: { onDone: (message: string,
     }
   };
   return <section className="upload-panel module-upload">
-    <FileDrop file={file} onFile={(f, err) => { setFile(f); if (err) onError(err); }} hint="PDF statements work best (text layer is used to place marks) · images and text accepted · up to 15 MB" accept=".pdf,image/*,.txt" />
+    <div className="mode-switch" role="tablist" aria-label="How to add the exhibit">
+      <button type="button" role="tab" aria-selected={mode === "scan"} className={mode === "scan" ? "active" : ""} onClick={() => setMode("scan")}><Camera />Scan with camera</button>
+      <button type="button" role="tab" aria-selected={mode === "file"} className={mode === "file" ? "active" : ""} onClick={() => setMode("file")}><Upload />Upload a file</button>
+    </div>
+    {mode === "file"
+      ? <FileDrop file={file} onFile={(f, err) => { setFile(f); setScanned(null); if (err) onError(err); }} hint="PDF statements work best (text layer is used to place marks) · images and text accepted · up to 15 MB" accept=".pdf,image/*,.txt" />
+      : file && scanned
+        ? <div className="file-drop has-file"><FileCheck2 aria-hidden="true" /><span><strong>{file.name}</strong><small>{scanned} page(s) · {(file.size / 1024).toFixed(0)} KB · ready to file</small></span><button type="button" className="text-switch" onClick={() => { setFile(null); setScanned(null); }}>Rescan</button></div>
+        : <CameraScan onReady={(f, n) => { setFile(f); setScanned(n); }} onError={onError} />}
     <div className="field-grid three-columns">
       <label>Exhibit category<select value={category} onChange={(e) => setCategory(e.target.value)}>{EXHIBIT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}</select></label>
       <label>Billing cycle<input placeholder="07/15/25–08/05/25" value={cycle} onChange={(e) => setCycle(e.target.value)} /></label>

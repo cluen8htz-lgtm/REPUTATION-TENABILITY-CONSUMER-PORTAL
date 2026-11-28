@@ -381,3 +381,42 @@ h1, h2, h3 { letter-spacing: -0.015em; }
   .brand-lockup img { width: 46px; height: 46px; }
   .foundation-card { padding: 26px 22px; }
 }
+
+/* ── Camera scan (Billing error) ─────────────────────────── */
+.mode-switch { display: inline-flex; gap: 4px; margin-bottom: 16px; padding: 4px; border: 1px solid #d6cbb6; border-radius: 999px; background: #f6f1e7; }
+.mode-switch button { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 16px; border: 0; border-radius: 999px; background: transparent; color: var(--muted-ink); font-size: 12px; font-weight: 600; }
+.mode-switch button svg { width: 15px; height: 15px; }
+.mode-switch button.active { background: #111; color: #f3d48f; }
+.camera-scan { margin-bottom: 22px; padding: 18px; border: 1px dashed #b9aa8e; background: #f2ecdf; }
+.scan-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.scan-tip { margin: 10px 0 0; color: var(--muted-ink); font-size: 11px; }
+.scan-pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 12px; margin: 16px 0 6px; padding: 0; list-style: none; }
+.scan-pages li { position: relative; overflow: hidden; border: 1px solid #cfc3ab; background: #fff; }
+.scan-pages img { display: block; width: 100%; aspect-ratio: 8.5 / 11; object-fit: cover; }
+.scan-pages img.enhanced { filter: grayscale(1) contrast(1.35) brightness(1.08); }
+.scan-pages .page-no { position: absolute; top: 6px; left: 6px; min-width: 22px; padding: 2px 6px; border-radius: 999px; background: #111; color: #f3d48f; font-size: 10px; font-weight: 700; text-align: center; }
+.page-tools { display: flex; justify-content: space-between; border-top: 1px solid #e3dac8; }
+.page-tools button { flex: 1; display: grid; place-items: center; min-height: 34px; border: 0; background: #fff; color: #333; }
+.page-tools button:disabled { color: #c9c2b4; }
+.page-tools button svg { width: 15px; height: 15px; }
+.inline-icon { width: 14px; height: 14px; color: #98723b; }
+.form-actions.start { justify-content: flex-start; }
+
+/* ── Scanner app card ────────────────────────────────────── */
+.app-card { display: flex; align-items: center; gap: 18px; margin: 22px 0; padding: 20px 22px; border: 1px solid #2c2a26; border-radius: 14px; background: radial-gradient(circle at 0 0, #2a2418, #0d0d0d 70%); color: #f2ede3; }
+.app-card-icon { position: relative; display: grid; place-items: center; width: 56px; height: 56px; flex: 0 0 auto; border-radius: 14px; background: linear-gradient(135deg, #f3d48f, #a87a2d); color: #111; }
+.app-card-icon svg:first-child { width: 28px; height: 28px; }
+.app-card-icon svg:last-child { position: absolute; right: -6px; bottom: -6px; width: 22px; height: 22px; padding: 3px; border-radius: 6px; background: #111; color: #f3d48f; }
+.app-card-copy { flex: 1; min-width: 0; }
+.app-card-eyebrow { display: block; color: #d9b56a; font-size: 10px; font-weight: 700; letter-spacing: .14em; }
+.app-card-copy strong { display: block; margin-top: 2px; font-size: 17px; }
+.app-card-copy p { margin: 6px 0 0; color: #bdb5a6; font-size: 12px; line-height: 1.5; }
+.app-card .gold-button { flex: 0 0 auto; }
+.app-card.compact { margin-top: 0; padding: 14px 18px; }
+@media (max-width: 640px) {
+  .app-card { flex-direction: column; align-items: flex-start; }
+  .app-card .gold-button { width: 100%; justify-content: center; }
+  .mode-switch { display: flex; }
+  .mode-switch button { flex: 1; justify-content: center; padding: 0 10px; }
+}
+.camera-scan .check-inline { padding-top: 6px; margin-bottom: 14px; }
