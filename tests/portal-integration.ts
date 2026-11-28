@@ -118,8 +118,21 @@ try {
   const webView = await appRouter.createCaller({ req: new Request("http://localhost"), resHeaders: new Headers(), user: mobileUser }).fcba.listStatements();
   assert.equal(webView.length, 2); // same exhibits appear in the website's billing-error page
 
+  // Google sign-in handed back to the app: one-time code + verifier → bearer token.
+  const { challengeFor, issueAppCode } = await import("../api/auth/app-handoff");
+  const appVerifier = "v".repeat(20) + String(stamp).padEnd(43, "0");
+  const appCode = await issueAppCode(mobileUser.unionId, challengeFor(appVerifier));
+  const exchange = (body: unknown) => httpApp.request("/api/mobile/google/exchange", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "10.9.9.10" }, body: JSON.stringify(body) });
+  assert.equal((await exchange({ code: appCode, verifier: "w".repeat(43) })).status, 401);
+  const exchanged = await exchange({ code: appCode, verifier: appVerifier });
+  assert.equal(exchanged.status, 200);
+  const googleToken = ((await exchanged.json()) as { token: string }).token;
+  assert.equal((await httpApp.request("/api/mobile/me", { headers: { authorization: `Bearer ${googleToken}` } })).status, 200);
+  assert.equal((await exchange({ code: appCode, verifier: appVerifier })).status, 401); // single use
+  assert.equal((await httpApp.request("/api/oauth/google/start?app_challenge=bad")).status, 400);
+
   passed = true;
-  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft", "username sign-up + sign-in, Google account linking", "mobile API: login, scan upload as Exhibit A/B, website sees them, isolation"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft", "username sign-up + sign-in, Google account linking", "mobile API: login, scan upload as Exhibit A/B, website sees them, isolation", "app Google handoff exchange"] }, null, 2));
 } catch (error) {
   console.error("Integration test failed:", error);
 } finally {

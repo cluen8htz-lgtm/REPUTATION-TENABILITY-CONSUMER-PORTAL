@@ -6,6 +6,9 @@
  *   GET /api/oauth/google/callback  → verify state, exchange code, verify the
  *                                     ID token, find/create the user, sign in
  *
+ * With ?app_challenge=… the flow was started by the RT Scanner app: instead of
+ * a cookie, the callback hands a one-time code back to the app (app-handoff.ts).
+ *
  * The state and PKCE verifier travel in a short-lived signed, HttpOnly cookie,
  * so no server-side session store is needed. The ID token's signature,
  * issuer, audience and expiry are verified against Google's published keys,
@@ -23,6 +26,7 @@ import { log } from "../lib/logger";
 import { getDb } from "../queries/connection";
 import { findUserByUnionId } from "../queries/users";
 import { sessionSetCookie } from "./session-cookie";
+import { appReturnPage, isAppChallenge, issueAppCode } from "./app-handoff";
 
 type App = Hono<{ Bindings: HttpBindings }>;
 
@@ -94,19 +98,22 @@ function flowCookie(c: Context, value: string, maxAge: number) {
   return cookie.serialize(FLOW_COOKIE, value, { httpOnly: true, secure, sameSite: "lax", path: "/api/oauth/google", maxAge });
 }
 
-function fail(c: Context, reason: string) {
+function fail(c: Context, reason: string, app = false) {
   c.header("Set-Cookie", flowCookie(c, "", 0), { append: true });
+  if (app) return c.html(appReturnPage({ error: reason }));
   return c.redirect(`/login?error=${encodeURIComponent(reason)}`, 302);
 }
 
 export function registerGoogleRoutes(app: App) {
   app.get("/api/oauth/google/start", async (c) => {
-    if (!googleSignInEnabled) return c.redirect("/login?error=google_unavailable", 302);
+    const appChallenge = c.req.query("app_challenge");
+    if (appChallenge !== undefined && !isAppChallenge(appChallenge)) return c.text("Invalid app_challenge", 400);
+    if (!googleSignInEnabled) return fail(c, "google_unavailable", Boolean(appChallenge));
     const state = b64url(randomBytes(24));
     const verifier = b64url(randomBytes(48));
     const challenge = b64url(createHash("sha256").update(verifier).digest());
     const intent = c.req.query("intent") === "signup" ? "signup" : "signin";
-    const flow = await new jose.SignJWT({ state, verifier, intent })
+    const flow = await new jose.SignJWT({ state, verifier, intent, ...(appChallenge ? { app: appChallenge } : {}) })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
       .setExpirationTime(`${FLOW_MAX_AGE}s`)
@@ -126,18 +133,23 @@ export function registerGoogleRoutes(app: App) {
 
   app.get("/api/oauth/google/callback", async (c) => {
     if (!googleSignInEnabled) return fail(c, "google_unavailable");
-    if (c.req.query("error")) return fail(c, c.req.query("error") === "access_denied" ? "google_cancelled" : "google_failed");
     const code = c.req.query("code");
     const state = c.req.query("state");
     const raw = cookie.parse(c.req.header("cookie") ?? "")[FLOW_COOKIE];
+    if (c.req.query("error")) {
+      // Send a cancelled app sign-in back to the app, not the website login.
+      const started = raw ? await jose.jwtVerify(raw, secretKey(), { algorithms: ["HS256"] }).catch(() => null) : null;
+      return fail(c, c.req.query("error") === "access_denied" ? "google_cancelled" : "google_failed", isAppChallenge(started?.payload.app));
+    }
     if (!code || !state || !raw) return fail(c, "google_expired");
-    let flow: { state: string; verifier: string };
+    let flow: { state: string; verifier: string; app?: string };
     try {
-      flow = (await jose.jwtVerify(raw, secretKey(), { algorithms: ["HS256"] })).payload as unknown as { state: string; verifier: string };
+      flow = (await jose.jwtVerify(raw, secretKey(), { algorithms: ["HS256"] })).payload as unknown as { state: string; verifier: string; app?: string };
     } catch {
       return fail(c, "google_expired");
     }
     if (flow.state !== state) return fail(c, "google_expired");
+    const forApp = isAppChallenge(flow.app);
 
     try {
       const res = await fetch(TOKEN_URL, {
@@ -154,19 +166,20 @@ export function registerGoogleRoutes(app: App) {
       });
       if (!res.ok) {
         log.warn("google token exchange failed", { status: res.status });
-        return fail(c, "google_failed");
+        return fail(c, "google_failed", forApp);
       }
       const tokens = (await res.json()) as { id_token?: string };
-      if (!tokens.id_token) return fail(c, "google_failed");
+      if (!tokens.id_token) return fail(c, "google_failed", forApp);
       const profile = await verifyGoogleIdToken(tokens.id_token);
       const unionId = await resolveGoogleUser(profile);
-      if (!unionId) return fail(c, "invite_only");
+      if (!unionId) return fail(c, "invite_only", forApp);
       c.header("Set-Cookie", flowCookie(c, "", 0), { append: true });
+      if (forApp) return c.html(appReturnPage({ code: await issueAppCode(unionId, flow.app!) }));
       c.header("Set-Cookie", await sessionSetCookie(c.req.raw.headers, unionId), { append: true });
       return c.redirect("/portal", 302);
     } catch (error) {
       log.warn("google sign-in failed", { error: error instanceof Error ? error.message : String(error) });
-      return fail(c, "google_failed");
+      return fail(c, "google_failed", forApp);
     }
   });
 }

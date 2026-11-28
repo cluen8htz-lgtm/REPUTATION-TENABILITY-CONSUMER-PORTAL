@@ -29,6 +29,8 @@ export const env = {
   appSecret: isProduction ? required("APP_SECRET") : optional("APP_SECRET", DEV_SECRET),
   databaseUrl: required("DATABASE_URL"),
   publicUrl: optional("PUBLIC_URL"),
+  /** Where the "Get the scanner app" card sends people (APK download or store page). */
+  scannerAppUrl: optional("SCANNER_APP_URL", "https://github.com/cluen8htz-lgtm/reputation-tenability-scanner/releases/latest"),
 
   // Accounts
   ownerUnionId: optional("OWNER_UNION_ID"),

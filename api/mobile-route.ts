@@ -2,6 +2,8 @@
  * mobile-route.ts — JSON API for the Reputation Tenability scanner app.
  *
  *   POST /api/mobile/login            {identifier, password} → {token, user}
+ *   POST /api/mobile/google/exchange  {code, verifier} → {token, user}
+ *                                     (finishes "Continue with Google"; see auth/app-handoff.ts)
  *   GET  /api/mobile/me               → {user}
  *   GET  /api/mobile/categories       → exhibit categories for the billing-error file
  *   POST /api/mobile/fcba/exhibits    multipart: file, category, cycle?, isFirstStatement?
@@ -30,6 +32,7 @@ import { findUserByUnionId } from "./queries/users";
 import { aiConfigured } from "./ai/llm";
 import { analyzeFcbaExhibit, fileFcbaExhibit } from "./fcba-router";
 import { log } from "./lib/logger";
+import { redeemAppCode } from "./auth/app-handoff";
 
 type App = Hono<{ Bindings: HttpBindings }>;
 const MAX_UPLOAD = 15_000_000;
@@ -49,6 +52,8 @@ async function requireUser(c: Context): Promise<User | Response> {
 
 const LoginBody = z.object({ identifier: z.string().trim().toLowerCase().min(1).max(320), password: z.string().min(1).max(200) });
 
+const ExchangeBody = z.object({ code: z.string().min(20).max(2000), verifier: z.string().min(43).max(128) });
+
 export function registerMobileRoutes(app: App) {
   app.post("/api/mobile/login", async (c) => {
     const limit = rateLimit(`mobile-login:${clientIp(c.req.raw.headers)}`, 10, 15 * 60 * 1000);
@@ -62,6 +67,18 @@ export function registerMobileRoutes(app: App) {
     const valid = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
     if (!user || !valid) return c.json({ error: "Username/email or password is incorrect." }, 401);
     await getDb().update(users).set({ lastSignInAt: new Date() }).where(eq(users.id, user.id));
+    const token = await signSessionToken({ unionId: user.unionId, clientId: env.appId });
+    return c.json({ token, user: publicUser(user) });
+  });
+
+  app.post("/api/mobile/google/exchange", async (c) => {
+    const limit = rateLimit(`mobile-google:${clientIp(c.req.raw.headers)}`, 20, 15 * 60 * 1000);
+    if (!limit.ok) return c.json({ error: "Too many attempts. Try again shortly." }, 429);
+    const parsed = ExchangeBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "Google sign-in didn't finish. Try again." }, 400);
+    const unionId = await redeemAppCode(parsed.data.code, parsed.data.verifier);
+    const user = unionId ? await findUserByUnionId(unionId) : undefined;
+    if (!user) return c.json({ error: "Google sign-in expired. Try again." }, 401);
     const token = await signSessionToken({ unionId: user.unionId, clientId: env.appId });
     return c.json({ token, user: publicUser(user) });
   });

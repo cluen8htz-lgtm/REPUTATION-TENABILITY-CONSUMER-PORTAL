@@ -53,6 +53,7 @@ export const authRouter = createRouter({
     kimiOAuth: kimiOAuthEnabled,
     google: googleSignInEnabled,
     ai: aiConfigured(),
+    scannerAppUrl: env.scannerAppUrl,
   })),
 
   register: publicQuery
