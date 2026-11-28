@@ -118,6 +118,23 @@ try {
   const webView = await appRouter.createCaller({ req: new Request("http://localhost"), resHeaders: new Headers(), user: mobileUser }).fcba.listStatements();
   assert.equal(webView.length, 2); // same exhibits appear in the website's billing-error page
 
+  // Call log from the app: create, edit name/number/time, isolation, delete; same rows as the website.
+  const json = { ...auth, "content-type": "application/json" };
+  assert.equal((await httpApp.request("/api/mobile/calls", { method: "POST", headers: json, body: JSON.stringify({ collectorName: "Acme Recovery", calledAt: "2026-11-02T09:15", direction: "incoming", summary: "Demanded payment" }) })).status, 400); // consent required
+  const made = await httpApp.request("/api/mobile/calls", { method: "POST", headers: json, body: JSON.stringify({ collectorName: "Acme Recovery", phoneNumber: "800-555-0100", calledAt: "2026-11-02T09:15", direction: "incoming", summary: "Demanded payment, threatened to sue", consentAcknowledged: true }) });
+  assert.equal(made.status, 201);
+  const callId = ((await made.json()) as { call: { id: number } }).call.id;
+  const edited = await httpApp.request(`/api/mobile/calls/${callId}`, { method: "PATCH", headers: json, body: JSON.stringify({ collectorName: "Acme Recovery LLC", phoneNumber: "", calledAt: "2026-11-02T10:40" }) });
+  assert.equal(edited.status, 200);
+  const editedCall = ((await edited.json()) as { call: { collectorName: string; phoneNumber: string | null; calledAt: string } }).call;
+  assert.deepEqual([editedCall.collectorName, editedCall.phoneNumber, editedCall.calledAt], ["Acme Recovery LLC", null, "2026-11-02T10:40"]);
+  const webCalls = await appRouter.createCaller({ req: new Request("http://localhost"), resHeaders: new Headers(), user: mobileUser }).portal.listCalls();
+  assert.equal(webCalls[0].collectorName, "Acme Recovery LLC");
+  assert.equal((await caller(other).portal.listCalls()).length, 0);
+  assert.equal((await httpApp.request("/api/mobile/calls", { headers: auth }).then((r) => r.json()) as { calls: unknown[] }).calls.length, 1);
+  assert.equal((await httpApp.request(`/api/mobile/calls/${callId}`, { method: "DELETE", headers: auth })).status, 200);
+  assert.equal((await httpApp.request(`/api/mobile/calls/${callId}`, { method: "DELETE", headers: auth })).status, 404);
+
   // Google sign-in handed back to the app: one-time code + verifier → bearer token.
   const { challengeFor, issueAppCode } = await import("../api/auth/app-handoff");
   const appVerifier = "v".repeat(20) + String(stamp).padEnd(43, "0");
@@ -132,7 +149,7 @@ try {
   assert.equal((await httpApp.request("/api/oauth/google/start?app_challenge=bad")).status, 400);
 
   passed = true;
-  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft", "username sign-up + sign-in, Google account linking", "mobile API: login, scan upload as Exhibit A/B, website sees them, isolation", "app Google handoff exchange"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", checks: ["intake", "case + cross-account rejection", "private upload", "admin boundary", "FCBA engine + annotation + template letter", "repo screening + draft", "username sign-up + sign-in, Google account linking", "mobile API: login, scan upload as Exhibit A/B, website sees them, isolation", "app Google handoff exchange", "app call log CRUD + isolation"] }, null, 2));
 } catch (error) {
   console.error("Integration test failed:", error);
 } finally {
