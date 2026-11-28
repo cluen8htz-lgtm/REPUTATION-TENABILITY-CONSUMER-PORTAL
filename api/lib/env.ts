@@ -30,7 +30,7 @@ export const env = {
   databaseUrl: required("DATABASE_URL"),
   publicUrl: optional("PUBLIC_URL"),
   /** Where the "Get the scanner app" card sends people (APK download or store page). */
-  scannerAppUrl: optional("SCANNER_APP_URL", "https://github.com/cluen8htz-lgtm/reputation-tenability-scanner/releases/latest"),
+  scannerAppUrl: optional("SCANNER_APP_URL", "https://github.com/cluen8htz-lgtm/reputation-tenability-scanner/releases/latest/download/RT-Scanner.apk"),
 
   // Accounts
   ownerUnionId: optional("OWNER_UNION_ID"),
